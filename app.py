@@ -37,7 +37,38 @@ if df is not None:
         display_df = df[df['Style_No'].str.contains(search, case=False, na=False)]
     else:
         display_df = df
+# --- REPORT SECTION: METAL REQUIREMENTS ---
+st.markdown("---")
+st.header("📊 Metal Requirements Summary")
 
+# Create two columns for side-by-side reports
+report_col1, report_col2 = st.columns(2)
+
+if df is not None:
+    # 1. Filter for Customer Orders vs Stock Orders
+    # (Using 'Order_Type' column from your mapping)
+    cust_order_df = df[df['Order_Type'].str.contains('CUSTOMER', case=False, na=False)]
+    stock_order_df = df[df['Order_Type'].str.contains('STOCK', case=False, na=False)]
+
+    with report_col1:
+        st.subheader("📋 Customer Order Metal Requirement")
+        # Grouping by Customer to count Bags and Sum Metal
+        cust_summary = cust_order_df.groupby('Customer').agg({
+            'Bag_No': 'count',
+            'Actual_Metal': 'sum'
+        }).rename(columns={'Bag_No': 'Qty (Bag Count)', 'Actual_Metal': 'Total Metal 18kt'})
+        
+        st.dataframe(cust_summary, use_container_width=True)
+
+    with report_col2:
+        st.subheader("📦 Stock Order Metal Requirement")
+        # Grouping by Customer to count Bags and Sum Metal
+        stock_summary = stock_order_df.groupby('Customer').agg({
+            'Bag_No': 'count',
+            'Actual_Metal': 'sum'
+        }).rename(columns={'Bag_No': 'Qty (Bag Count)', 'Actual_Metal': 'Total Metal 18kt'})
+        
+        st.dataframe(stock_summary, use_container_width=True)
     # Display the Table
     st.dataframe(
         display_df,
