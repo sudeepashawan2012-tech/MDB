@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 
 st.set_page_config(page_title="MASTER DATABASE", layout="wide")
-API_URL = "https://script.google.com/macros/s/AKfycbyI75L-6S2-fN6Y-N5-996_W7_h5M7pX-1yXp_C7-WpX_qXp_Q/exec"
+API_URL = "https://script.google.com/macros/s/AKfycbzJeiT_mTmPFVEFDqDZvnZeakdFVxUrGiOjtl-NBgGFHyi3HYLCO1648JSm7s2bW0A/exec"
 
 @st.cache_data(ttl=60) 
 def fetch_data():
