@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 
 st.set_page_config(page_title="MASTER DATABASE", layout="wide")
-API_URL = "https://script.google.com/macros/s/AKfycbyGUZnqcp5R7k4Aa1wWvVLs-AfheyyOVeSYDkfsfVLRfe43gYg1vZ80RmHGm4Wg2ama/exec"
+API_URL = "https://script.google.com/macros/s/AKfycbzJeiT_mTmPFVEFDqDZvnZeakdFVxUrGiOjtl-NBgGFHyi3HYLCO1648JSm7s2bW0A/exec"
 
 @st.cache_data(ttl=60) 
 def fetch_data():
@@ -11,53 +11,58 @@ def fetch_data():
         response = requests.get(API_URL, timeout=15)
         return pd.DataFrame(response.json())
     except Exception as e:
-        st.error(f"Waiting for Data... {e}")
         return None
 
 df = fetch_data()
 
-# --- SIDEBAR: MANAGEMENT SECTION ---
-st.sidebar.title("📑 METAL REQUIREMENTS")
-st.sidebar.info("Criteria: Metal Issue Date is Pending")
+# --- SIDEBAR: MANAGEMENT REPORTS ---
+st.sidebar.title("📊 METAL REQUIREMENTS")
+st.sidebar.markdown("*(Bags with Metal Pending)*")
 
 if df is not None:
-    # 1. Logic: Filter for Metal Pending (Where Metal_Issue_Date is empty or null)
-    # Note: We use .fillna('') to handle any missing data safely
-    pending_metal_df = df[df['Metal_Issue_Date'].fillna('').str.strip() == ""]
+    # 1. CRITERIA: Find rows where 'Metal_Issue_Date' is empty
+    pending_mask = (df['Metal_Issue_Date'] == "") | (df['Metal_Issue_Date'].isna())
+    pending_df = df[pending_mask].copy()
     
-    # 2. Split into Customer vs Stock
-    cust_pend = pending_metal_df[pending_metal_df['Order_Type'].str.contains('CUSTOMER', case=False, na=False)]
-    stock_pend = pending_metal_df[pending_metal_df['Order_Type'].str.contains('STOCK', case=False, na=False)]
+    # Ensure Metal is treated as a number for summing
+    pending_df['Metal'] = pd.to_numeric(pending_df['Metal'], errors='coerce').fillna(0)
 
-    # 3. Create Sidebar Tables
-    st.sidebar.subheader("📍 Customer Orders")
-    if not cust_pend.empty:
-        # Grouping by Customer, counting Bag_No, summing 'Metal' column
-        cust_sum = cust_pend.groupby('Customer').agg({'Bag_No': 'count', 'Metal': 'sum'})
-        cust_sum.columns = ['Qty (Bags)', 'Metal 18kt']
-        st.sidebar.dataframe(cust_sum, use_container_width=True)
+    # 2. CUSTOMER ORDER SECTION
+    st.sidebar.subheader("💎 Customer Order Metal")
+    cust_df = pending_df[pending_df['Order_Type'].str.contains('CUSTOMER', case=False, na=False)]
+    if not cust_df.empty:
+        cust_summary = cust_df.groupby('Customer').agg({
+            'Bag_No': 'count',
+            'Metal': 'sum'
+        }).rename(columns={'Bag_No': 'Qty (Bags)', 'Metal': 'Metal 18kt'})
+        st.sidebar.table(cust_summary)
     else:
-        st.sidebar.write("No Pending Customer Metal")
+        st.sidebar.write("No pending customer orders.")
 
-    st.sidebar.subheader("📍 Stock Orders")
-    if not stock_pend.empty:
-        stock_sum = stock_pend.groupby('Customer').agg({'Bag_No': 'count', 'Metal': 'sum'})
-        stock_sum.columns = ['Qty (Bags)', 'Metal 18kt']
-        st.sidebar.dataframe(stock_sum, use_container_width=True)
+    # 3. STOCK ORDER SECTION
+    st.sidebar.subheader("📦 Stock Order Metal")
+    stock_df = pending_df[pending_df['Order_Type'].str.contains('STOCK', case=False, na=False)]
+    if not stock_df.empty:
+        stock_summary = stock_df.groupby('Customer').agg({
+            'Bag_No': 'count',
+            'Metal': 'sum'
+        }).rename(columns={'Bag_No': 'Qty (Bags)', 'Metal': 'Metal 18kt'})
+        st.sidebar.table(stock_summary)
     else:
-        st.sidebar.write("No Pending Stock Metal")
+        st.sidebar.write("No pending stock orders.")
 
 # --- MAIN PAGE ---
 st.title("💎 MASTER DATABASE")
 
 if df is not None:
-    # Search and Main View
-    search = st.text_input("🔍 Search by Style No or Bag No")
+    search = st.text_input("🔍 Quick Search (Style or Bag No)")
     
     display_df = df.copy()
     if search:
-        display_df = display_df[display_df['Style_No'].str.contains(search, case=False, na=False) | 
-                                display_df['Bag_No'].astype(str).str.contains(search, case=False, na=False)]
+        display_df = display_df[
+            display_df['Style_No'].str.contains(search, case=False, na=False) | 
+            display_df['Bag_No'].astype(str).str.contains(search, case=False, na=False)
+        ]
 
     st.dataframe(
         display_df,
