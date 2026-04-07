@@ -29,7 +29,7 @@ def check_password():
 
     if "password_correct" not in st.session_state:
         # First run, show input for password
-        st.title("🔒 JDS Management System")
+        st.title("🔒 Master Structure & Reports")
         st.text_input("Enter Workshop Password", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
