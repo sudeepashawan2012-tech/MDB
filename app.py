@@ -4,7 +4,7 @@ import requests
 import numpy as np
 
 # 1. SETUP & MOBILE-FRIENDLY CONFIG
-st.set_page_config(page_title="JDS MASTER", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="MASTER DATABASE", layout="wide", initial_sidebar_state="collapsed")
 
 # Custom CSS for Theme Compatibility (Dark/Light) and Mobile Padding
 st.markdown("""
