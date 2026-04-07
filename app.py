@@ -25,10 +25,10 @@ st.markdown("""
 
 def check_password():
     if "password_correct" not in st.session_state:
-        st.title("🔒 JDS Management")
+        st.title("🔒 Master Structure & Reports")
         pwd = st.text_input("Workshop Password", type="password")
         if st.button("Login"):
-            if pwd == "JDS2026":
+            if pwd == "12345":
                 st.session_state["password_correct"] = True
                 st.rerun()
             else:
@@ -58,7 +58,7 @@ if check_password():
         return int(x + 0.5) if x > 0 else 0
 
     # --- TOP NAVIGATION (Better for Mobile than Sidebar) ---
-    st.sidebar.title("💼 JDS ADMIN")
+    st.sidebar.title("💼 ADMIN")
     report_choice = st.sidebar.selectbox("GO TO:", ["🏠 Home", "📊 Metal Requirements", "📋 CSR (Status Report)"])
     
     if st.sidebar.button("Logout"):
