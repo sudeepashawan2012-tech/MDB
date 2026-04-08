@@ -4,7 +4,7 @@ import requests
 import numpy as np
 
 # 1. SETUP
-st.set_page_config(page_title="JDS MASTER DATABASE", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="MASTER DATABASE", layout="wide", initial_sidebar_state="collapsed")
 
 # --- DATA SOURCE LINKS ---
 MASTER_API_URL = "https://script.google.com/macros/s/AKfycbzJeiT_mTmPFVEFDqDZvnZeakdFVxUrGiOjtl-NBgGFHyi3HYLCO1648JSm7s2bW0A/exec"
