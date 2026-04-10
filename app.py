@@ -126,23 +126,33 @@ if check_password():
                         st.write(f"8. **Deliv. Date:** {get_val(row.get('Delivery_Date'))}", unsafe_allow_html=True)
 
                     def show_clean_tables(hist_df, label):
-                        st.markdown(f'<div class="section-head">{label} MOVEMENT</div>', unsafe_allow_html=True)
-                        if hist_df is not None:
-                            moves = hist_df[hist_df['BAG NO'] == search_bag].copy()
-                            if not moves.empty:
-                                h_in, h_out = st.columns(2)
-                                with h_in:
-                                    st.info("Inward")
-                                    # Select only Date and Purpose columns
-                                    in_cols = [c for c in ['INWARD DATE', 'PURPOSE IN'] if c in moves.columns]
-                                    in_df = moves[in_cols].dropna(subset=['PURPOSE IN'])
-                                    st.table(in_df.rename(columns={'INWARD DATE': 'Date', 'PURPOSE IN': 'Purpose'}))
-                                with h_out:
-                                    st.error("Outward")
-                                    out_cols = [c for c in ['OUTWARD DATE', 'PURPOSE OUT'] if c in moves.columns]
-                                    out_df = moves[out_cols].dropna(subset=['PURPOSE OUT'])
-                                    st.table(out_df.rename(columns={'OUTWARD DATE': 'Date', 'PURPOSE OUT': 'Purpose'}))
-                            else: st.info(f"No {label} logs found for this bag.")
+    st.markdown(f'<div class="section-head">{label} MOVEMENT</div>', unsafe_allow_html=True)
+    if hist_df is not None:
+        # We ensure the Bag No is treated as a string and stripped of spaces
+        search_bag_str = str(search_bag).strip()
+        moves = hist_df[hist_df['BAG NO'].astype(str).str.strip() == search_bag_str].copy()
+        
+        if not moves.empty:
+            h_in, h_out = st.columns(2)
+            with h_in:
+                st.info("Inward")
+                in_cols = [c for c in ['INWARD DATE', 'PURPOSE IN'] if c in moves.columns]
+                # FIX: Don't drop rows if Purpose is missing, just fill with "No Purpose Listed"
+                in_df = moves[in_cols].copy()
+                in_df['PURPOSE IN'] = in_df['PURPOSE IN'].fillna("N/A")
+                # Only show rows where at least the DATE exists
+                in_df = in_df.dropna(subset=['INWARD DATE']) 
+                st.table(in_df.rename(columns={'INWARD DATE': 'Date', 'PURPOSE IN': 'Purpose'}))
+                
+            with h_out:
+                st.error("Outward")
+                out_cols = [c for c in ['OUTWARD DATE', 'PURPOSE OUT'] if c in moves.columns]
+                out_df = moves[out_cols].copy()
+                out_df['PURPOSE OUT'] = out_df['PURPOSE OUT'].fillna("N/A")
+                out_df = out_df.dropna(subset=['OUTWARD DATE'])
+                st.table(out_df.rename(columns={'OUTWARD DATE': 'Date', 'PURPOSE OUT': 'Purpose'}))
+        else: 
+            st.info(f"No {label} logs found for this bag.")
 
                     show_clean_tables(df_pre, "PRE-FINISH")
                     show_clean_tables(df_post, "POST-FINISH")
