@@ -49,11 +49,9 @@ if check_password():
         try:
             frames = []
             for url in urls:
-                tdf = pd.read_csv(url, skiprows=1)
-                tdf.columns = tdf.columns.str.strip()
+                tdf = pd.read_csv(url, skiprows=1, header=None) # Load raw to handle specific col IDs
                 frames.append(tdf)
             combined = pd.concat(frames, ignore_index=True)
-            combined['BAG NO'] = combined['BAG NO'].astype(str).str.strip()
             return combined
         except: return None
 
@@ -70,43 +68,42 @@ if check_password():
         try: return int(float(x) + 0.5) if float(x) > 0 else 0
         except: return 0
 
-    def show_clean_tables(hist_df, label, search_bag):
+    def show_history_tables(hist_df, label, search_bag, mode):
         st.markdown(f'<div class="section-head">{label} MOVEMENT</div>', unsafe_allow_html=True)
         if hist_df is not None:
+            # Column Mapping based on your provided Image
+            # Pre-Finish: Bag=Col C(2), InPurp=I(8), InDate=M(12), InTime=N(13) | OutPurp=S(18), OutDate=V(21), OutTime=W(22)
+            # Post-Finish: Bag=Col B(1), InPurp=R(17), InDate=U(20), InTime=V(21) | OutPurp=H(7), OutDate=L(11), OutTime=M(12)
+            
+            if mode == "PRE":
+                bag_col, in_p, in_d, in_t, out_p, out_d, out_t = 2, 8, 12, 13, 18, 21, 22
+            else:
+                bag_col, in_p, in_d, in_t, out_p, out_d, out_t = 1, 17, 20, 21, 7, 11, 12
+
+            # Filter data for specific Bag No
             search_bag_str = str(search_bag).strip()
-            moves = hist_df[hist_df['BAG NO'].astype(str).str.strip() == search_bag_str].copy()
+            moves = hist_df[hist_df[bag_col].astype(str).str.strip() == search_bag_str].copy()
             
             if not moves.empty:
                 h_in, h_out = st.columns(2)
                 
                 with h_in:
                     st.info("Inward")
-                    # Column 'I' is index 8 (A=0, B=1... I=8)
-                    # We target Column I for Inward Purpose and Column H (Index 7) for Inward Date
-                    try:
-                        in_df = pd.DataFrame({
-                            'Date': moves.iloc[:, 7],    # Column H: Inward Date
-                            'Purpose': moves.iloc[:, 8]  # Column I: Inward Purpose
-                        })
-                        in_df['Purpose'] = in_df['Purpose'].fillna("N/A")
-                        in_df = in_df.dropna(subset=['Date'])
-                        st.table(in_df)
-                    except:
-                        st.warning("Inward Data Structure mismatch.")
+                    in_df = pd.DataFrame({
+                        'Date': moves[in_d],
+                        'Time': moves[in_t],
+                        'Purpose': moves[in_p]
+                    }).dropna(subset=['Date'])
+                    st.table(in_df.fillna("-"))
                     
                 with h_out:
                     st.error("Outward")
-                    # Targeting Column J (Index 9) for Outward Date and Column K (Index 10) for Outward Purpose
-                    try:
-                        out_df = pd.DataFrame({
-                            'Date': moves.iloc[:, 9],    # Column J
-                            'Purpose': moves.iloc[:, 10] # Column K
-                        })
-                        out_df['Purpose'] = out_df['Purpose'].fillna("N/A")
-                        out_df = out_df.dropna(subset=['Date'])
-                        st.table(out_df)
-                    except:
-                        st.warning("Outward Data Structure mismatch.")
+                    out_df = pd.DataFrame({
+                        'Date': moves[out_d],
+                        'Time': moves[out_t],
+                        'Purpose': moves[out_p]
+                    }).dropna(subset=['Date'])
+                    st.table(out_df.fillna("-"))
             else: 
                 st.info(f"No {label} logs found.")
 
@@ -156,8 +153,8 @@ if check_password():
                         st.write(f"7. **Metal Issue:** {get_val(m_issue)}", unsafe_allow_html=True)
                         st.write(f"8. **Deliv. Date:** {get_val(row.get('Delivery_Date'))}", unsafe_allow_html=True)
 
-                    show_clean_tables(df_pre, "PRE-FINISH", search_bag)
-                    show_clean_tables(df_post, "POST-FINISH", search_bag)
+                    show_history_tables(df_pre, "PRE-FINISH", search_bag, "PRE")
+                    show_history_tables(df_post, "POST-FINISH", search_bag, "POST")
                 else: st.error("Bag number not found.")
 
         elif report_choice == "📊 Metal Requirements":
