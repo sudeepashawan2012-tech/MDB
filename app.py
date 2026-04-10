@@ -72,6 +72,35 @@ if check_password():
         try: return int(float(x) + 0.5) if float(x) > 0 else 0
         except: return 0
 
+    def show_clean_tables(hist_df, label, search_bag):
+        st.markdown(f'<div class="section-head">{label} MOVEMENT</div>', unsafe_allow_html=True)
+        if hist_df is not None:
+            # Match the bag number strictly
+            search_bag_str = str(search_bag).strip()
+            moves = hist_df[hist_df['BAG NO'].astype(str).str.strip() == search_bag_str].copy()
+            
+            if not moves.empty:
+                h_in, h_out = st.columns(2)
+                with h_in:
+                    st.info("Inward")
+                    in_cols = [c for c in ['INWARD DATE', 'PURPOSE IN'] if c in moves.columns]
+                    in_df = moves[in_cols].copy()
+                    # We fill missing purposes with N/A so the row doesn't disappear
+                    in_df['PURPOSE IN'] = in_df['PURPOSE IN'].fillna("N/A")
+                    # We only show rows that actually have a date
+                    in_df = in_df.dropna(subset=['INWARD DATE'])
+                    st.table(in_df.rename(columns={'INWARD DATE': 'Date', 'PURPOSE IN': 'Purpose'}))
+                    
+                with h_out:
+                    st.error("Outward")
+                    out_cols = [c for c in ['OUTWARD DATE', 'PURPOSE OUT'] if c in moves.columns]
+                    out_df = moves[out_cols].copy()
+                    out_df['PURPOSE OUT'] = out_df['PURPOSE OUT'].fillna("N/A")
+                    out_df = out_df.dropna(subset=['OUTWARD DATE'])
+                    st.table(out_df.rename(columns={'OUTWARD DATE': 'Date', 'PURPOSE OUT': 'Purpose'}))
+            else: 
+                st.info(f"No {label} logs found for this bag.")
+
     st.sidebar.title("💼 ADMIN")
     report_choice = st.sidebar.selectbox("GO TO:", ["🏠 Home", "🔍 Bag History Report", "📊 Metal Requirements", "📋 CSR"])
     
@@ -118,51 +147,20 @@ if check_password():
                         st.write(f"6. **Dia Cts:** {get_val(row.get('Dia_Cts'))}", unsafe_allow_html=True)
                         
                         m_issue = row.get('Metal_Issue_Date')
-                        # Logic to show confirmed date if status is CASTING but date is blank
                         if (pd.isna(m_issue) or str(m_issue).strip() == "") and status == "CASTING":
                             m_issue = "25/03/2026"
                         
                         st.write(f"7. **Metal Issue:** {get_val(m_issue)}", unsafe_allow_html=True)
                         st.write(f"8. **Deliv. Date:** {get_val(row.get('Delivery_Date'))}", unsafe_allow_html=True)
 
-                    def show_clean_tables(hist_df, label):
-    st.markdown(f'<div class="section-head">{label} MOVEMENT</div>', unsafe_allow_html=True)
-    if hist_df is not None:
-        # We ensure the Bag No is treated as a string and stripped of spaces
-        search_bag_str = str(search_bag).strip()
-        moves = hist_df[hist_df['BAG NO'].astype(str).str.strip() == search_bag_str].copy()
-        
-        if not moves.empty:
-            h_in, h_out = st.columns(2)
-            with h_in:
-                st.info("Inward")
-                in_cols = [c for c in ['INWARD DATE', 'PURPOSE IN'] if c in moves.columns]
-                # FIX: Don't drop rows if Purpose is missing, just fill with "No Purpose Listed"
-                in_df = moves[in_cols].copy()
-                in_df['PURPOSE IN'] = in_df['PURPOSE IN'].fillna("N/A")
-                # Only show rows where at least the DATE exists
-                in_df = in_df.dropna(subset=['INWARD DATE']) 
-                st.table(in_df.rename(columns={'INWARD DATE': 'Date', 'PURPOSE IN': 'Purpose'}))
-                
-            with h_out:
-                st.error("Outward")
-                out_cols = [c for c in ['OUTWARD DATE', 'PURPOSE OUT'] if c in moves.columns]
-                out_df = moves[out_cols].copy()
-                out_df['PURPOSE OUT'] = out_df['PURPOSE OUT'].fillna("N/A")
-                out_df = out_df.dropna(subset=['OUTWARD DATE'])
-                st.table(out_df.rename(columns={'OUTWARD DATE': 'Date', 'PURPOSE OUT': 'Purpose'}))
-        else: 
-            st.info(f"No {label} logs found for this bag.")
-
-                    show_clean_tables(df_pre, "PRE-FINISH")
-                    show_clean_tables(df_post, "POST-FINISH")
+                    show_clean_tables(df_pre, "PRE-FINISH", search_bag)
+                    show_clean_tables(df_post, "POST-FINISH", search_bag)
                 else: st.error("Bag number not found in Master Database.")
 
         # --- 3. METAL REQUIREMENTS ---
         elif report_choice == "📊 Metal Requirements":
             st.subheader("📊 Metal Requirements")
             df['Metal'] = pd.to_numeric(df['Metal'], errors='coerce').fillna(0)
-            # Filter for pending metal
             p_df = df[(df['Metal_Issue_Date'].isna()) | (df['Final_VZ_Status'] == "METAL PENDING")].copy()
             
             def create_metal_card(data, label):
