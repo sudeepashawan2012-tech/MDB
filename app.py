@@ -64,17 +64,20 @@ if check_password():
     df = fetch_master_from_sql()
     
     @st.cache_data(ttl=60)
-    def fetch_history(urls):
-        try:
-            frames = []
-            for url in urls:
-                tdf = pd.read_csv(url, skiprows=1, header=None)
-                frames.append(tdf)
-            return pd.concat(frames, ignore_index=True)
-        except: return None
-
-    df_pre = fetch_history([LIVE_CSV_URL, ARCHIVE_CSV_URL])
-    df_post = fetch_history([POST_1, POST_2])
+def fetch_master_from_sql():
+    try:
+        client = bigquery.Client.from_service_account_info(st.secrets["gcp_service_account"])
+        query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
+        df = client.query(query).to_dataframe()
+        
+        # --- ADD THIS LINE TO FIX THE CRASH ---
+        df = df.astype(str) 
+        
+        df.columns = [c.replace(' ', '_') for c in df.columns] 
+        return df
+    except Exception as e:
+        st.error(f"SQL Error: {e}")
+        return None
 
     # HELPER FUNCTIONS
     def get_val(val):
