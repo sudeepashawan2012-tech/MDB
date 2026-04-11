@@ -64,7 +64,7 @@ if check_password():
     df = fetch_master_from_sql()
     
     @st.cache_data(ttl=60)
-def fetch_master_from_sql():
+    def fetch_master_from_sql():
     try:
         client = bigquery.Client.from_service_account_info(st.secrets["gcp_service_account"])
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
