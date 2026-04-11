@@ -2,18 +2,37 @@ import streamlit as st
 import pandas as pd
 import requests
 import numpy as np
+from google.cloud import bigquery
 
-# 1. SETUP
+# 1. SETUP & PAGE CONFIG
 st.set_page_config(page_title="MASTER DATABASE", layout="wide", initial_sidebar_state="collapsed")
 
-# --- DATA SOURCE LINKS ---
-MASTER_API_URL = "https://script.google.com/macros/s/AKfycbzJeiT_mTmPFVEFDqDZvnZeakdFVxUrGiOjtl-NBgGFHyi3HYLCO1648JSm7s2bW0A/exec"
+# --- HIGH SPEED SQL FETCH ---
+@st.cache_data(ttl=60)
+def fetch_master_from_sql():
+    try:
+        # Connect using the secret key in Streamlit Settings
+        client = bigquery.Client.from_service_account_info(st.secrets["gcp_service_account"])
+        
+        # This is the line you can change to "master_inventory_OLD" for your 100% proof test!
+        query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
+        
+        df = client.query(query).to_dataframe()
+        
+        # Clean column names (BigQuery often adds underscores for spaces)
+        df.columns = [c.replace(' ', '_') for c in df.columns] 
+        return df
+    except Exception as e:
+        st.error(f"SQL Error: {e}")
+        return None
+
+# --- HISTORY DATA LINKS (CSV) ---
 LIVE_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=449683950&single=true&output=csv"
 ARCHIVE_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=1700828894&single=true&output=csv"
 POST_1 = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=1461249957&single=true&output=csv"
 POST_2 = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=163646832&single=true&output=csv"
 
-# Custom CSS for Minimalist UI
+# Custom CSS for Minimalist Workshop UI
 st.markdown("""
     <style>
     [data-testid="stMetric"] { background-color: rgba(125, 125, 125, 0.1); padding: 10px; border-radius: 8px; }
@@ -23,42 +42,41 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# 2. AUTHENTICATION
 def check_password():
     if "password_correct" not in st.session_state:
         st.title("🔒 Master Structure & Reports")
         pwd = st.text_input("Workshop Password", type="password")
         if st.button("Login"):
-            if pwd == "12345": 
+            # Compares entry to the password we put in Streamlit Secrets
+            if pwd == st.secrets["workshop_password"]: 
                 st.session_state["password_correct"] = True
                 st.rerun()
-            else: st.error("Invalid Password")
+            else: 
+                st.error("Invalid Password")
         return False
     return True
 
+# 3. APP LOGIC
 if check_password():
     
-    @st.cache_data(ttl=60)
-    def fetch_master():
-        try:
-            r = requests.get(MASTER_API_URL, timeout=15)
-            return pd.DataFrame(r.json()).replace('', np.nan).dropna(subset=['Bag_No'], how='all')
-        except: return None
-
+    # FETCH DATA
+    df = fetch_master_from_sql()
+    
     @st.cache_data(ttl=60)
     def fetch_history(urls):
         try:
             frames = []
             for url in urls:
-                tdf = pd.read_csv(url, skiprows=1, header=None) # Load raw to handle specific col IDs
+                tdf = pd.read_csv(url, skiprows=1, header=None)
                 frames.append(tdf)
-            combined = pd.concat(frames, ignore_index=True)
-            return combined
+            return pd.concat(frames, ignore_index=True)
         except: return None
 
-    df = fetch_master()
     df_pre = fetch_history([LIVE_CSV_URL, ARCHIVE_CSV_URL])
     df_post = fetch_history([POST_1, POST_2])
 
+    # HELPER FUNCTIONS
     def get_val(val):
         if pd.isna(val) or str(val).strip().lower() in ['nan', '', 'none', 'pending']:
             return '<span class="missing-data">X</span>'
@@ -71,42 +89,26 @@ if check_password():
     def show_history_tables(hist_df, label, search_bag, mode):
         st.markdown(f'<div class="section-head">{label} MOVEMENT</div>', unsafe_allow_html=True)
         if hist_df is not None:
-            # Column Mapping based on your provided Image
-            # Pre-Finish: Bag=Col C(2), InPurp=I(8), InDate=M(12), InTime=N(13) | OutPurp=S(18), OutDate=V(21), OutTime=W(22)
-            # Post-Finish: Bag=Col B(1), InPurp=R(17), InDate=U(20), InTime=V(21) | OutPurp=H(7), OutDate=L(11), OutTime=M(12)
-            
             if mode == "PRE":
                 bag_col, in_p, in_d, in_t, out_p, out_d, out_t = 2, 8, 12, 13, 18, 21, 22
             else:
                 bag_col, in_p, in_d, in_t, out_p, out_d, out_t = 1, 17, 20, 21, 7, 11, 12
 
-            # Filter data for specific Bag No
             search_bag_str = str(search_bag).strip()
             moves = hist_df[hist_df[bag_col].astype(str).str.strip() == search_bag_str].copy()
             
             if not moves.empty:
                 h_in, h_out = st.columns(2)
-                
                 with h_in:
                     st.info("Inward")
-                    in_df = pd.DataFrame({
-                        'Date': moves[in_d],
-                        'Time': moves[in_t],
-                        'Purpose': moves[in_p]
-                    }).dropna(subset=['Date'])
-                    st.table(in_df.fillna("-"))
-                    
+                    st.table(pd.DataFrame({'Date': moves[in_d], 'Time': moves[in_t], 'Purpose': moves[in_p]}).dropna(subset=['Date']).fillna("-"))
                 with h_out:
                     st.error("Outward")
-                    out_df = pd.DataFrame({
-                        'Date': moves[out_d],
-                        'Time': moves[out_t],
-                        'Purpose': moves[out_p]
-                    }).dropna(subset=['Date'])
-                    st.table(out_df.fillna("-"))
+                    st.table(pd.DataFrame({'Date': moves[out_d], 'Time': moves[out_t], 'Purpose': moves[out_p]}).dropna(subset=['Date']).fillna("-"))
             else: 
                 st.info(f"No {label} logs found.")
 
+    # SIDEBAR NAVIGATION
     st.sidebar.title("💼 ADMIN")
     report_choice = st.sidebar.selectbox("GO TO:", ["🏠 Home", "🔍 Bag History Report", "📊 Metal Requirements", "📋 CSR"])
     
@@ -114,6 +116,7 @@ if check_password():
         del st.session_state["password_correct"]
         st.rerun()
 
+    # DASHBOARD PAGES
     if df is not None:
         if report_choice == "🏠 Home":
             st.subheader("🔍 Search Inventory")
@@ -122,7 +125,7 @@ if check_password():
             if search:
                 display_df = display_df[display_df['Style_No'].astype(str).str.contains(search, case=False) | 
                                         display_df['Bag_No'].astype(str).str.contains(search, case=False)]
-            st.dataframe(display_df, column_config={"Thumbnail_Link": st.column_config.ImageColumn("Preview")}, use_container_width=True, hide_index=True)
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
 
         elif report_choice == "🔍 Bag History Report":
             st.subheader("🔍 Bag History Report")
@@ -143,15 +146,10 @@ if check_password():
                         st.write(f"1. **Customer:** {get_val(row.get('Customer'))}", unsafe_allow_html=True)
                         st.write(f"2. **Type:** {get_val(row.get('Order_Type'))}", unsafe_allow_html=True)
                         st.write(f"3. **Order Date:** {get_val(row.get('Order_Date'))}", unsafe_allow_html=True)
-                        st.write(f"4. **Karigar:** {get_val(row.get('Karigar'))}", unsafe_allow_html=True)
                     with colB:
-                        st.write(f"5. **Metal:** {get_val(row.get('Metal'))}g", unsafe_allow_html=True)
-                        st.write(f"6. **Dia Cts:** {get_val(row.get('Dia_Cts'))}", unsafe_allow_html=True)
-                        m_issue = row.get('Metal_Issue_Date')
-                        if (pd.isna(m_issue) or str(m_issue).strip() == "") and status == "CASTING":
-                            m_issue = "25/03/2026"
-                        st.write(f"7. **Metal Issue:** {get_val(m_issue)}", unsafe_allow_html=True)
-                        st.write(f"8. **Deliv. Date:** {get_val(row.get('Delivery_Date'))}", unsafe_allow_html=True)
+                        st.write(f"4. **Metal:** {get_val(row.get('Metal'))}g", unsafe_allow_html=True)
+                        st.write(f"5. **Dia Cts:** {get_val(row.get('Dia_Cts'))}", unsafe_allow_html=True)
+                        st.write(f"6. **Deliv. Date:** {get_val(row.get('Delivery_Date'))}", unsafe_allow_html=True)
 
                     show_history_tables(df_pre, "PRE-FINISH", search_bag, "PRE")
                     show_history_tables(df_post, "POST-FINISH", search_bag, "POST")
