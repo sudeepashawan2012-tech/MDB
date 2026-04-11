@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
-import requests
 import numpy as np
+import requests
 from google.cloud import bigquery
+from google.oauth2 import service_account  # Needed for Drive permissions
 
 # 1. SETUP & PAGE CONFIG
 st.set_page_config(page_title="MASTER DATABASE", layout="wide", initial_sidebar_state="collapsed")
@@ -11,25 +12,28 @@ st.set_page_config(page_title="MASTER DATABASE", layout="wide", initial_sidebar_
 @st.cache_data(ttl=60)
 def fetch_master_from_sql():
     try:
-        # 1. Define the "Passports" needed (BigQuery + Drive + Sheets)
+        # Define the "Passports" needed (BigQuery + Drive + Sheets)
         scopes = [
             "https://www.googleapis.com/auth/bigquery",
             "https://www.googleapis.com/auth/drive",
             "https://www.googleapis.com/auth/spreadsheets",
         ]
         
-        # 2. Connect using the secret key AND the scopes
-        credentials = bigquery.service_account.Credentials.from_service_account_info(
+        # Connect using the secret key AND the scopes
+        creds = service_account.Credentials.from_service_account_info(
             st.secrets["gcp_service_account"], 
             scopes=scopes
         )
         
-        client = bigquery.Client(credentials=credentials, project=credentials.project_id)
+        client = bigquery.Client(credentials=creds, project=creds.project_id)
         
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
         df = client.query(query).to_dataframe()
         
+        # Convert all to string to prevent Arrow/Pyarrow crashes
         df = df.astype(str) 
+        
+        # Clean column names (BigQuery often adds underscores for spaces)
         df.columns = [c.replace(' ', '_') for c in df.columns] 
         return df
     except Exception as e:
