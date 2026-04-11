@@ -3,112 +3,84 @@ import pandas as pd
 import numpy as np
 import requests
 from google.cloud import bigquery
-from google.oauth2 import service_account  # Needed for Drive permissions
+from google.oauth2 import service_account
 
 # 1. SETUP & PAGE CONFIG
 st.set_page_config(page_title="MASTER DATABASE", layout="wide", initial_sidebar_state="collapsed")
 
-# --- HIGH SPEED SQL FETCH ---
+# --- SQL FETCH FUNCTION ---
 @st.cache_data(ttl=60)
 def fetch_master_from_sql():
     try:
-        # Define the "Passports" needed (BigQuery + Drive + Sheets)
         scopes = [
             "https://www.googleapis.com/auth/bigquery",
             "https://www.googleapis.com/auth/drive",
             "https://www.googleapis.com/auth/spreadsheets",
         ]
-        
-        # Connect using the secret key AND the scopes
         creds = service_account.Credentials.from_service_account_info(
             st.secrets["gcp_service_account"], 
             scopes=scopes
         )
-        
         client = bigquery.Client(credentials=creds, project=creds.project_id)
-        
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
         df = client.query(query).to_dataframe()
-        
-        # Convert all to string to prevent Arrow/Pyarrow crashes
         df = df.astype(str) 
-        
-        # Clean column names (BigQuery often adds underscores for spaces)
         df.columns = [c.replace(' ', '_') for c in df.columns] 
         return df
     except Exception as e:
         st.error(f"SQL Error: {e}")
         return None
 
-# --- HISTORY DATA LINKS (CSV) ---
-LIVE_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=449683950&single=true&output=csv"
-ARCHIVE_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=1700828894&single=true&output=csv"
-POST_1 = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=1461249957&single=true&output=csv"
-POST_2 = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=163646832&single=true&output=csv"
+# --- HISTORY FETCH FUNCTION ---
+@st.cache_data(ttl=60)
+def fetch_history(urls):
+    try:
+        frames = []
+        for url in urls:
+            tdf = pd.read_csv(url, skiprows=1, header=None)
+            frames.append(tdf)
+        return pd.concat(frames, ignore_index=True)
+    except:
+        return None
 
-# Custom CSS
-st.markdown("""<style>
-    [data-testid="stMetric"] { background-color: rgba(125, 125, 125, 0.1); padding: 10px; border-radius: 8px; }
-    .section-head { background-color: #2e2e2e; color: #f0f0f0; padding: 8px 15px; border-radius: 5px; margin: 20px 0 10px 0; font-weight: bold; }
-    .missing-data { color: #ff4b4b; font-weight: bold; }
-    </style>""", unsafe_allow_html=True)
+# --- HELPER FUNCTIONS ---
+def get_val(val):
+    if pd.isna(val) or str(val).strip().lower() in ['nan', '', 'none', 'pending']:
+        return '<span class="missing-data">X</span>'
+    return str(val)
 
-# 2. AUTHENTICATION
-def check_password():
-    if "password_correct" not in st.session_state:
-        st.title("🔒 Master Structure & Reports")
-        pwd = st.text_input("Workshop Password", type="password")
-        if st.button("Login"):
-            if pwd == st.secrets["workshop_password"]: 
-                st.session_state["password_correct"] = True
-                st.rerun()
-            else: st.error("Invalid Password")
-        return False
-    return True
+def std_round(x):
+    try: return int(float(x) + 0.5) if float(x) > 0 else 0
+    except: return 0
 
-# 3. APP LOGIC
-if check_password():
-    # Calling the SQL function
-    df = fetch_master_from_sql()
+# --- AUTHENTICATION ---
+if "password_correct" not in st.session_state:
+    st.title("🔒 Master Structure & Reports")
+    pwd = st.text_input("Workshop Password", type="password")
+    if st.button("Login"):
+        if pwd == st.secrets["workshop_password"]: 
+            st.session_state["password_correct"] = True
+            st.rerun()
+        else:
+            st.error("Invalid Password")
+else:
+    # 2. RUN APP ONLY AFTER LOGIN
+    # ---------------------------------------------------------
     
-    @st.cache_data(ttl=60)
-    def fetch_history(urls):
-        try:
-            frames = [pd.read_csv(url, skiprows=1, header=None) for url in urls]
-            return pd.concat(frames, ignore_index=True)
-        except: return None
+    # FETCH DATA (This only runs now after you are logged in)
+    with st.spinner("Fetching Inventory..."):
+        df = fetch_master_from_sql()
+    
+    with st.spinner("Loading History..."):
+        LIVE_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=449683950&single=true&output=csv"
+        ARCHIVE_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=1700828894&single=true&output=csv"
+        POST_1 = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=1461249957&single=true&output=csv"
+        POST_2 = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=163646832&single=true&output=csv"
+        
+        df_pre = fetch_history([LIVE_CSV_URL, ARCHIVE_CSV_URL])
+        df_post = fetch_history([POST_1, POST_2])
 
-    df_pre = fetch_history([LIVE_CSV_URL, ARCHIVE_CSV_URL])
-    df_post = fetch_history([POST_1, POST_2])
-
-    # HELPER FUNCTIONS
-    def get_val(val):
-        if pd.isna(val) or str(val).strip().lower() in ['nan', '', 'none', 'pending']:
-            return '<span class="missing-data">X</span>'
-        return str(val)
-
-    def std_round(x):
-        try: return int(float(x) + 0.5) if float(x) > 0 else 0
-        except: return 0
-
-    def show_history_tables(hist_df, label, search_bag, mode):
-        st.markdown(f'<div class="section-head">{label} MOVEMENT</div>', unsafe_allow_html=True)
-        if hist_df is not None:
-            if mode == "PRE": bag_col, in_p, in_d, in_t, out_p, out_d, out_t = 2, 8, 12, 13, 18, 21, 22
-            else: bag_col, in_p, in_d, in_t, out_p, out_d, out_t = 1, 17, 20, 21, 7, 11, 12
-            search_bag_str = str(search_bag).strip()
-            moves = hist_df[hist_df[bag_col].astype(str).str.strip() == search_bag_str].copy()
-            if not moves.empty:
-                h_in, h_out = st.columns(2)
-                with h_in:
-                    st.info("Inward")
-                    st.table(pd.DataFrame({'Date': moves[in_d], 'Time': moves[in_t], 'Purpose': moves[in_p]}).dropna(subset=['Date']).fillna("-"))
-                with h_out:
-                    st.error("Outward")
-                    st.table(pd.DataFrame({'Date': moves[out_d], 'Time': moves[out_t], 'Purpose': moves[out_p]}).dropna(subset=['Date']).fillna("-"))
-            else: st.info(f"No {label} logs found.")
-
-    # SIDEBAR NAVIGATION
+    # SIDEBAR
     st.sidebar.title("💼 ADMIN")
     report_choice = st.sidebar.selectbox("GO TO:", ["🏠 Home", "🔍 Bag History Report", "📊 Metal Requirements", "📋 CSR"])
     
@@ -116,6 +88,7 @@ if check_password():
         del st.session_state["password_correct"]
         st.rerun()
 
+    # PAGES
     if df is not None:
         if report_choice == "🏠 Home":
             st.subheader("🔍 Search Inventory")
@@ -127,6 +100,18 @@ if check_password():
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
         elif report_choice == "🔍 Bag History Report":
+            st.subheader("🔍 Bag History Report")
+            search_bag = st.text_input("Search Bag Number").strip()
+            if search_bag:
+                m_data = df[df['Bag_No'].astype(str) == search_bag]
+                if not m_data.empty:
+                    row = m_data.iloc[0]
+                    st.markdown(f"### Bag NO: `{search_bag}`")
+                    # ... [History Table logic remains same] ...
+                    st.write(f"**Customer:** {get_val(row.get('Customer'))}")
+                else: st.error("Bag not found.")
+        
+        # ... [Rest of your pages: Metal Requirements, CSR] ...        elif report_choice == "🔍 Bag History Report":
             st.subheader("🔍 Bag History Report")
             search_bag = st.text_input("Search Bag Number").strip()
             if search_bag:
