@@ -11,13 +11,25 @@ st.set_page_config(page_title="MASTER DATABASE", layout="wide", initial_sidebar_
 @st.cache_data(ttl=60)
 def fetch_master_from_sql():
     try:
-        client = bigquery.Client.from_service_account_info(st.secrets["gcp_service_account"])
+        # 1. Define the "Passports" needed (BigQuery + Drive + Sheets)
+        scopes = [
+            "https://www.googleapis.com/auth/bigquery",
+            "https://www.googleapis.com/auth/drive",
+            "https://www.googleapis.com/auth/spreadsheets",
+        ]
+        
+        # 2. Connect using the secret key AND the scopes
+        credentials = bigquery.service_account.Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"], 
+            scopes=scopes
+        )
+        
+        client = bigquery.Client(credentials=credentials, project=credentials.project_id)
+        
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
         df = client.query(query).to_dataframe()
         
-        # --- FIX FOR DATA TYPE CRASH ---
         df = df.astype(str) 
-        
         df.columns = [c.replace(' ', '_') for c in df.columns] 
         return df
     except Exception as e:
