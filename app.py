@@ -11,15 +11,13 @@ st.set_page_config(page_title="MASTER DATABASE", layout="wide", initial_sidebar_
 @st.cache_data(ttl=60)
 def fetch_master_from_sql():
     try:
-        # Connect using the secret key in Streamlit Settings
         client = bigquery.Client.from_service_account_info(st.secrets["gcp_service_account"])
-        
-        # This is the line you can change to "master_inventory_OLD" for your 100% proof test!
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
-        
         df = client.query(query).to_dataframe()
         
-        # Clean column names (BigQuery often adds underscores for spaces)
+        # --- FIX FOR DATA TYPE CRASH ---
+        df = df.astype(str) 
+        
         df.columns = [c.replace(' ', '_') for c in df.columns] 
         return df
     except Exception as e:
@@ -32,15 +30,12 @@ ARCHIVE_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2
 POST_1 = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=1461249957&single=true&output=csv"
 POST_2 = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRk0Sr33sugG2FtNtdqqk11u8b2aGKGniTN1n2qcWiOCg1W0Vi5JzqLWZdu1DWVUfpP2baURyOn4qo7/pub?gid=163646832&single=true&output=csv"
 
-# Custom CSS for Minimalist Workshop UI
-st.markdown("""
-    <style>
+# Custom CSS
+st.markdown("""<style>
     [data-testid="stMetric"] { background-color: rgba(125, 125, 125, 0.1); padding: 10px; border-radius: 8px; }
-    .stTable { overflow-x: auto; }
     .section-head { background-color: #2e2e2e; color: #f0f0f0; padding: 8px 15px; border-radius: 5px; margin: 20px 0 10px 0; font-weight: bold; }
     .missing-data { color: #ff4b4b; font-weight: bold; }
-    </style>
-    """, unsafe_allow_html=True)
+    </style>""", unsafe_allow_html=True)
 
 # 2. AUTHENTICATION
 def check_password():
@@ -48,36 +43,27 @@ def check_password():
         st.title("🔒 Master Structure & Reports")
         pwd = st.text_input("Workshop Password", type="password")
         if st.button("Login"):
-            # Compares entry to the password we put in Streamlit Secrets
             if pwd == st.secrets["workshop_password"]: 
                 st.session_state["password_correct"] = True
                 st.rerun()
-            else: 
-                st.error("Invalid Password")
+            else: st.error("Invalid Password")
         return False
     return True
 
 # 3. APP LOGIC
 if check_password():
-    
-    # FETCH DATA
+    # Calling the SQL function
     df = fetch_master_from_sql()
     
     @st.cache_data(ttl=60)
-    def fetch_master_from_sql():
-    try:
-        client = bigquery.Client.from_service_account_info(st.secrets["gcp_service_account"])
-        query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
-        df = client.query(query).to_dataframe()
-        
-        # --- ADD THIS LINE TO FIX THE CRASH ---
-        df = df.astype(str) 
-        
-        df.columns = [c.replace(' ', '_') for c in df.columns] 
-        return df
-    except Exception as e:
-        st.error(f"SQL Error: {e}")
-        return None
+    def fetch_history(urls):
+        try:
+            frames = [pd.read_csv(url, skiprows=1, header=None) for url in urls]
+            return pd.concat(frames, ignore_index=True)
+        except: return None
+
+    df_pre = fetch_history([LIVE_CSV_URL, ARCHIVE_CSV_URL])
+    df_post = fetch_history([POST_1, POST_2])
 
     # HELPER FUNCTIONS
     def get_val(val):
@@ -92,14 +78,10 @@ if check_password():
     def show_history_tables(hist_df, label, search_bag, mode):
         st.markdown(f'<div class="section-head">{label} MOVEMENT</div>', unsafe_allow_html=True)
         if hist_df is not None:
-            if mode == "PRE":
-                bag_col, in_p, in_d, in_t, out_p, out_d, out_t = 2, 8, 12, 13, 18, 21, 22
-            else:
-                bag_col, in_p, in_d, in_t, out_p, out_d, out_t = 1, 17, 20, 21, 7, 11, 12
-
+            if mode == "PRE": bag_col, in_p, in_d, in_t, out_p, out_d, out_t = 2, 8, 12, 13, 18, 21, 22
+            else: bag_col, in_p, in_d, in_t, out_p, out_d, out_t = 1, 17, 20, 21, 7, 11, 12
             search_bag_str = str(search_bag).strip()
             moves = hist_df[hist_df[bag_col].astype(str).str.strip() == search_bag_str].copy()
-            
             if not moves.empty:
                 h_in, h_out = st.columns(2)
                 with h_in:
@@ -108,8 +90,7 @@ if check_password():
                 with h_out:
                     st.error("Outward")
                     st.table(pd.DataFrame({'Date': moves[out_d], 'Time': moves[out_t], 'Purpose': moves[out_p]}).dropna(subset=['Date']).fillna("-"))
-            else: 
-                st.info(f"No {label} logs found.")
+            else: st.info(f"No {label} logs found.")
 
     # SIDEBAR NAVIGATION
     st.sidebar.title("💼 ADMIN")
@@ -119,7 +100,6 @@ if check_password():
         del st.session_state["password_correct"]
         st.rerun()
 
-    # DASHBOARD PAGES
     if df is not None:
         if report_choice == "🏠 Home":
             st.subheader("🔍 Search Inventory")
@@ -133,7 +113,6 @@ if check_password():
         elif report_choice == "🔍 Bag History Report":
             st.subheader("🔍 Bag History Report")
             search_bag = st.text_input("Search Bag Number").strip()
-            
             if search_bag:
                 m_data = df[df['Bag_No'].astype(str) == search_bag]
                 if not m_data.empty:
@@ -143,7 +122,6 @@ if check_password():
                     c1.markdown(f"### Bag NO: `{search_bag}`")
                     status = row.get('Final_VZ_Status', 'N/A')
                     c2.warning(f"**Status:** {status}")
-                    
                     colA, colB = st.columns(2)
                     with colA:
                         st.write(f"1. **Customer:** {get_val(row.get('Customer'))}", unsafe_allow_html=True)
@@ -153,7 +131,6 @@ if check_password():
                         st.write(f"4. **Metal:** {get_val(row.get('Metal'))}g", unsafe_allow_html=True)
                         st.write(f"5. **Dia Cts:** {get_val(row.get('Dia_Cts'))}", unsafe_allow_html=True)
                         st.write(f"6. **Deliv. Date:** {get_val(row.get('Delivery_Date'))}", unsafe_allow_html=True)
-
                     show_history_tables(df_pre, "PRE-FINISH", search_bag, "PRE")
                     show_history_tables(df_post, "POST-FINISH", search_bag, "POST")
                 else: st.error("Bag number not found.")
@@ -162,7 +139,6 @@ if check_password():
             st.subheader("📊 Metal Requirements")
             df['Metal'] = pd.to_numeric(df['Metal'], errors='coerce').fillna(0)
             p_df = df[(df['Metal_Issue_Date'].isna()) | (df['Final_VZ_Status'] == "METAL PENDING")].copy()
-            
             def create_metal_card(data, label):
                 summary = data.groupby('Customer').agg({'Bag_No': 'count', 'Metal': 'sum'})
                 summary['Metal 18kt'] = summary['Metal'].apply(std_round)
@@ -171,11 +147,9 @@ if check_password():
                 c1.metric(f"{label} Bags", summary['Bag_No'].sum())
                 c2.metric(f"18kt Total", f"{summary['Metal 18kt'].sum()}g")
                 st.table(summary[['Bag_No', 'Metal 18kt', 'Pure']].rename(columns={'Bag_No': 'Qty'}))
-
             st.info("👤 CUSTOMER ORDERS")
             c_df = p_df[p_df['Order_Type'].str.contains('CUSTOMER', case=False, na=False)]
             if not c_df.empty: create_metal_card(c_df, "Cust")
-            
             st.warning("📦 STOCK ORDERS")
             s_df = p_df[p_df['Order_Type'].str.contains('STOCK', case=False, na=False)]
             if not s_df.empty: create_metal_card(s_df, "Stock")
@@ -187,7 +161,6 @@ if check_password():
             csr_df['Metal'] = pd.to_numeric(csr_df['Metal'], errors='coerce').fillna(0)
             csr_df['Dia_Cts'] = pd.to_numeric(csr_df['Dia_Cts'], errors='coerce').fillna(0)
             csr_df['Seq'] = csr_df['Final_VZ_Status'].map(status_seq).fillna(99)
-
             for cust in sorted(csr_df['Customer'].unique()):
                 with st.expander(f"👤 {cust}"):
                     cust_data = csr_df[csr_df['Customer'] == cust]
