@@ -59,7 +59,7 @@ else:
 
             for o_type in ["CUSTOMER", "STOCK"]:
                 st.subheader(f"📍 {o_type} ORDERS")
-                sub_data = pending_df[pending_df[col_order_type].str.contains(o_type, case=False, na=False)]
+                sub_data = pending_df[pending_df[col_order_type].str.contains(o_type.split()[0], case=False, na=False)]
                 
                 if not sub_data.empty:
                     summary = sub_data.groupby(col_cust).agg({
@@ -70,16 +70,19 @@ else:
                     
                     summary.columns = ['Customer Code', 'Bag Qty', 'Metal 18kt', 'Dia Cts']
                     summary['Metal 18kt'] = summary['Metal 18kt'].apply(std_round)
-                    # Rounding to 2 decimal places for table
                     summary['Dia Cts'] = summary['Dia Cts'].map('{:,.2f}'.format)
                     
                     st.table(summary)
                     
-                    # Totals with 2 decimals for Dia Cts
+                    # Totals with Large Bold Styling
                     t_bags = sub_data[col_bag].count()
                     t_metal = std_round(sub_data[col_metal].sum())
                     t_dia = sub_data[col_dia].sum()
-                    st.markdown(f"**SUBTOTAL:** `{t_bags}` Bags | `{t_metal}g` 18kt | `{t_dia:,.2f}` Dia Cts")
+                    st.markdown(f"""<div style="font-size:22px; font-weight:bold; border-top:2px solid #eee; padding-top:10px;">
+                        SUBTOTAL: {t_bags} Bags | {t_metal}g 18kt | {t_dia:,.2f} Dia Cts
+                        </div>""", unsafe_allow_html=True)
+                else:
+                    st.info(f"No Metal Pending For {o_type.title()} Orders")
 
         # --- REPORT 2: CSR ---
         elif menu == "📋 CSR":
@@ -108,13 +111,16 @@ else:
                     summary['Metal 18kt'] = summary[col_metal].apply(std_round)
                     summary['Dia Cts'] = summary[col_dia].map('{:,.2f}'.format)
                     
-                    # Selection to hide the Seq column (Left side marking in Image 2)
+                    # Hide the index/Seq column by selecting only named columns
                     display_tab = summary[[col_status, col_bag, 'Metal 18kt', 'Dia Cts']].rename(
                         columns={col_status: 'Status', col_bag: 'Bag Qty'}
                     )
-                    st.table(display_tab)
+                    # hide_index=True ensures the red-marked column in Image 2 is gone
+                    st.dataframe(display_tab, hide_index=True, use_container_width=True)
                     
                     t_cust_bags = summary[col_bag].sum()
                     t_cust_metal = std_round(summary[col_metal].sum())
                     t_cust_dia = summary[col_dia].sum()
-                    st.markdown(f"**TOTAL:** `{t_cust_bags}` Bags | `{t_cust_metal}g` 18kt | `{t_cust_dia:,.2f}` Dia Cts")
+                    st.markdown(f"""<div style="font-size:20px; font-weight:bold; border-top:1px solid #ccc; padding-top:5px; color:#1f77b4;">
+                        TOTAL: {t_cust_bags} Bags | {t_cust_metal}g 18kt | {t_cust_dia:,.2f} Dia Cts
+                        </div>""", unsafe_allow_html=True)
