@@ -15,6 +15,14 @@ def fetch_data():
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
         df = client.query(query).to_dataframe()
         df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
+        
+        # --- CRITICAL FIX: REMOVE BLANK ROWS ---
+        # Find the customer column and drop rows where it is null or empty
+        col_cust_check = next((c for c in df.columns if 'CUSTOMER' in c), None)
+        if col_cust_check:
+            df = df.dropna(subset=[col_cust_check])
+            df = df[df[col_cust_check].astype(str).str.strip() != ""]
+            
         return df
     except Exception as e:
         st.error(f"Connection Error: {e}")
@@ -74,7 +82,6 @@ else:
                     
                     st.table(summary)
                     
-                    # Totals with Large Bold Styling
                     t_bags = sub_data[col_bag].count()
                     t_metal = std_round(sub_data[col_metal].sum())
                     t_dia = sub_data[col_dia].sum()
@@ -95,7 +102,6 @@ else:
             }
             
             csr_df = df.copy()
-            csr_df[col_cust] = csr_df[col_cust].fillna("UNKNOWN")
             csr_df['Seq'] = csr_df[col_status].map(status_seq).fillna(99)
 
             customers = sorted(csr_df[col_cust].unique())
@@ -111,11 +117,9 @@ else:
                     summary['Metal 18kt'] = summary[col_metal].apply(std_round)
                     summary['Dia Cts'] = summary[col_dia].map('{:,.2f}'.format)
                     
-                    # Hide the index/Seq column by selecting only named columns
                     display_tab = summary[[col_status, col_bag, 'Metal 18kt', 'Dia Cts']].rename(
                         columns={col_status: 'Status', col_bag: 'Bag Qty'}
                     )
-                    # hide_index=True ensures the red-marked column in Image 2 is gone
                     st.dataframe(display_tab, hide_index=True, use_container_width=True)
                     
                     t_cust_bags = summary[col_bag].sum()
