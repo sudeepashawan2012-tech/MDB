@@ -12,11 +12,8 @@ def fetch_data():
         scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
         creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
         client = bigquery.Client(credentials=creds, project=creds.project_id)
-        
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
         df = client.query(query).to_dataframe()
-        
-        # Clean column names to standard SNAKE_CASE
         df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
         return df
     except Exception as e:
@@ -39,7 +36,7 @@ else:
     df = fetch_data()
 
     if df is not None:
-        # --- DYNAMIC COLUMN MAPPING ---
+        # Dynamic Column Mapping
         col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
         col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
         col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
@@ -48,7 +45,6 @@ else:
         col_dia = next((c for c in df.columns if 'DIA' in c and 'CTS' in c), 'DIA_CTS')
         col_issue_dt = next((c for c in df.columns if 'METAL' in c and 'ISSUE' in c and 'DATE' in c), 'METAL_ISSUE_DATE')
 
-        # Standardize Numeric Data
         df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
         df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
@@ -57,7 +53,6 @@ else:
         # --- REPORT 1: METAL REQUIREMENTS ---
         if menu == "📊 Metal Requirements":
             st.header("📊 Metal Requirement Report")
-            
             exclude = ["HOLD", "CANCEL"]
             mask = (df[col_issue_dt].isna() | (df[col_issue_dt].astype(str).str.strip() == "")) & (~df[col_status].isin(exclude))
             pending_df = df[mask].copy()
@@ -75,24 +70,20 @@ else:
                     
                     summary.columns = ['Customer Code', 'Bag Qty', 'Metal 18kt', 'Dia Cts']
                     summary['Metal 18kt'] = summary['Metal 18kt'].apply(std_round)
-                    # FIX: Round Dia Cts to 2 decimal places
-                    summary['Dia Cts'] = summary['Dia Cts'].apply(lambda x: round(x, 2))
+                    # Rounding to 2 decimal places for table
+                    summary['Dia Cts'] = summary['Dia Cts'].map('{:,.2f}'.format)
                     
                     st.table(summary)
                     
-                    # Totals
+                    # Totals with 2 decimals for Dia Cts
                     t_bags = sub_data[col_bag].count()
                     t_metal = std_round(sub_data[col_metal].sum())
-                    # FIX: Added Dia Cts Subtotal
-                    t_dia = round(sub_data[col_dia].sum(), 2)
-                    st.markdown(f"**SUBTOTAL:** `{t_bags}` Bags | `{t_metal}g` 18kt | `{t_dia}` Dia Cts")
-                else:
-                    st.write(f"No pending {o_type} requirements.")
+                    t_dia = sub_data[col_dia].sum()
+                    st.markdown(f"**SUBTOTAL:** `{t_bags}` Bags | `{t_metal}g` 18kt | `{t_dia:,.2f}` Dia Cts")
 
         # --- REPORT 2: CSR ---
         elif menu == "📋 CSR":
             st.header("📋 Customer Status Report")
-            
             status_seq = {
                 "SEQUENCE": 0, "ENGRAVING/HUID": 1, "IGI": 2, "ON HAND": 3, 
                 "FINAL QC": 4, "SETTING QC OK": 5, "SETTING": 6, "GHAT OK": 7, 
@@ -101,7 +92,6 @@ else:
             }
             
             csr_df = df.copy()
-            # FIX: Ensure Customer column has no NaNs to prevent sort crash
             csr_df[col_cust] = csr_df[col_cust].fillna("UNKNOWN")
             csr_df['Seq'] = csr_df[col_status].map(status_seq).fillna(99)
 
@@ -116,9 +106,9 @@ else:
                     }).reset_index().sort_values('Seq')
                     
                     summary['Metal 18kt'] = summary[col_metal].apply(std_round)
-                    # FIX: Round Dia Cts to 2 decimal places
-                    summary['Dia Cts'] = summary[col_dia].apply(lambda x: round(x, 2))
+                    summary['Dia Cts'] = summary[col_dia].map('{:,.2f}'.format)
                     
+                    # Selection to hide the Seq column (Left side marking in Image 2)
                     display_tab = summary[[col_status, col_bag, 'Metal 18kt', 'Dia Cts']].rename(
                         columns={col_status: 'Status', col_bag: 'Bag Qty'}
                     )
@@ -126,5 +116,5 @@ else:
                     
                     t_cust_bags = summary[col_bag].sum()
                     t_cust_metal = std_round(summary[col_metal].sum())
-                    t_cust_dia = round(summary[col_dia].sum(), 2)
-                    st.markdown(f"**TOTAL:** `{t_cust_bags}` Bags | `{t_cust_metal}g` 18kt | `{t_cust_dia}` Dia Cts")
+                    t_cust_dia = summary[col_dia].sum()
+                    st.markdown(f"**TOTAL:** `{t_cust_bags}` Bags | `{t_cust_metal}g` 18kt | `{t_cust_dia:,.2f}` Dia Cts")
