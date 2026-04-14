@@ -10,13 +10,18 @@ st.set_page_config(page_title="WORKSHOP REPORTS", layout="wide")
 @st.cache_data(ttl=300)
 def fetch_data():
     try:
+        # These scopes are required to let BigQuery "talk" to your Google Sheets
         scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
         creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
         client = bigquery.Client(credentials=creds, project=creds.project_id)
+        
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
         df = client.query(query).to_dataframe()
+        
+        # Standardize Master headers
         df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
         
+        # Remove blank rows
         col_cust_check = next((c for c in df.columns if 'CUSTOMER' in c), None)
         if col_cust_check:
             df = df.dropna(subset=[col_cust_check])
@@ -32,9 +37,9 @@ def std_round(x):
     except: return 0
 
 def clean_date(dt):
-    """Helper to format dates nicely"""
+    """Formats SQL dates to DD-Mon-YYYY (e.g., 14-Apr-2026)"""
     try:
-        if pd.isna(dt) or str(dt).strip() == "": return "---"
+        if pd.isna(dt) or str(dt).strip() == "" or str(dt) == "None": return "---"
         if isinstance(dt, str):
             dt = pd.to_datetime(dt)
         return dt.strftime('%d-%b-%Y')
@@ -53,7 +58,7 @@ else:
     df = fetch_data()
 
     if df is not None:
-        # Dynamic Column Mapping
+        # Dynamic Column Mapping for main reports
         col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
         col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
         col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
@@ -65,7 +70,6 @@ else:
         df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
         df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
-        # Added "🔍 Bag History Report" to the menu
         menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "🔍 Bag History Report"])
 
         # --- REPORT 1: METAL REQUIREMENTS (UNCHANGED) ---
@@ -89,7 +93,6 @@ else:
                     summary.columns = ['Customer Code', 'Bag Qty', 'Metal 18kt', 'Dia Cts']
                     summary['Metal 18kt'] = summary['Metal 18kt'].apply(std_round)
                     summary['Dia Cts'] = summary['Dia Cts'].map('{:,.2f}'.format)
-                    
                     st.table(summary)
                     
                     t_bags = sub_data[col_bag].count()
@@ -113,8 +116,8 @@ else:
             
             csr_df = df.copy()
             csr_df['Seq'] = csr_df[col_status].map(status_seq).fillna(99)
-
             customers = sorted(csr_df[col_cust].unique())
+            
             for cust in customers:
                 with st.expander(f"👤 CUSTOMER: {cust}"):
                     cust_data = csr_df[csr_df[col_cust] == cust]
@@ -139,20 +142,19 @@ else:
                         TOTAL: {t_cust_bags} Bags | {t_cust_metal}g 18kt | {t_cust_dia:,.2f} Dia Cts
                         </div>""", unsafe_allow_html=True)
 
-        # --- NEW REPORT: BAG HISTORY ---
+        # --- REPORT 3: BAG HISTORY (FIXED FOR 403 ERROR & COLUMN VISIBILITY) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
             
             if search_bag:
-                # 1. Search in Master DF
-                match = df[df[col_bag].astype(str) == search_bag]
+                # Filter Master DataFrame
+                match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
                 
                 if not match.empty:
                     r = match.iloc[0]
                     st.markdown("### 📦 Bag Master Details")
                     
-                    # Layout Master Details in Columns
                     mc1, mc2 = st.columns(2)
                     with mc1:
                         st.write(f"**Customer:** {r.get(col_cust, 'N/A')}")
@@ -163,40 +165,42 @@ else:
                     with mc2:
                         st.write(f"**Order Date:** {clean_date(r.get('ORDER_DATE'))}")
                         st.write(f"**Metal Issue:** {clean_date(r.get(col_issue_dt))}")
-                        st.write(f"**Dia Issue:** {clean_date(r.get('DIAMOND_DATE'))}")
+                        # If column name is DIAMOND_DATE or DIAMOND_ISSUE_DATE, clean_date will catch it
+                        st.write(f"**Dia Issue:** {clean_date(r.get('DIAMOND_DATE', r.get('DIAMOND_ISSUE_DATE', '---')))}") 
                         st.write(f"**Delivery Date:** {clean_date(r.get('DELIVERY_DATE'))}")
                         st.write(f"**Current Status:** {r.get(col_status, 'N/A')}")
 
                     st.divider()
 
-                    # 2. Fetch Movement Data from SQL
+                    # Fetch Movement Data
                     try:
-                        creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+                        # CRITICAL: Re-applying scopes here fixes the "403 Access Denied"
+                        scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
+                        creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
                         client = bigquery.Client(credentials=creds, project=creds.project_id)
                         
-                        # Query Pre and Post tables
                         q_pre = f"SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement` WHERE BAG_NO = '{search_bag}'"
                         q_post = f"SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement` WHERE BAG_NO = '{search_bag}'"
                         
                         df_pre_mv = client.query(q_pre).to_dataframe()
                         df_post_mv = client.query(q_post).to_dataframe()
 
-                        # Display Movement
                         col_left, col_right = st.columns(2)
                         
                         with col_left:
                             st.info("🛠️ PRE-FINISH MOVEMENT")
                             if not df_pre_mv.empty:
-                                df_pre_mv.columns = [c.upper().replace('_', ' ') for c in df_pre_mv.columns]
-                                st.dataframe(df_pre_mv, hide_index=True)
+                                # Clean underscores from headers for clean display
+                                df_pre_mv.columns = [c.replace('_', ' ').strip() for c in df_pre_mv.columns]
+                                st.dataframe(df_pre_mv, hide_index=True, use_container_width=True)
                             else:
                                 st.write("No Pre-Finish records found.")
 
                         with col_right:
                             st.error("✨ POST-FINISH MOVEMENT")
                             if not df_post_mv.empty:
-                                df_post_mv.columns = [c.upper().replace('_', ' ') for c in df_post_mv.columns]
-                                st.dataframe(df_post_mv, hide_index=True)
+                                df_post_mv.columns = [c.replace('_', ' ').strip() for c in df_post_mv.columns]
+                                st.dataframe(df_post_mv, hide_index=True, use_container_width=True)
                             else:
                                 st.write("No Post-Finish records found.")
 
