@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
 from google.oauth2 import service_account
+from datetime import datetime
 
 # 1. SETUP
 st.set_page_config(page_title="WORKSHOP REPORTS", layout="wide")
@@ -16,8 +17,6 @@ def fetch_data():
         df = client.query(query).to_dataframe()
         df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
         
-        # --- CRITICAL FIX: REMOVE BLANK ROWS ---
-        # Find the customer column and drop rows where it is null or empty
         col_cust_check = next((c for c in df.columns if 'CUSTOMER' in c), None)
         if col_cust_check:
             df = df.dropna(subset=[col_cust_check])
@@ -31,6 +30,16 @@ def fetch_data():
 def std_round(x):
     try: return int(float(x) + 0.5) if float(x) > 0 else 0
     except: return 0
+
+def clean_date(dt):
+    """Helper to format dates nicely"""
+    try:
+        if pd.isna(dt) or str(dt).strip() == "": return "---"
+        if isinstance(dt, str):
+            dt = pd.to_datetime(dt)
+        return dt.strftime('%d-%b-%Y')
+    except:
+        return str(dt)
 
 # 2. RUN APP
 if "password_correct" not in st.session_state:
@@ -56,9 +65,10 @@ else:
         df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
         df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
-        menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR"])
+        # Added "🔍 Bag History Report" to the menu
+        menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "🔍 Bag History Report"])
 
-        # --- REPORT 1: METAL REQUIREMENTS ---
+        # --- REPORT 1: METAL REQUIREMENTS (UNCHANGED) ---
         if menu == "📊 Metal Requirements":
             st.header("📊 Metal Requirement Report")
             exclude = ["HOLD", "CANCEL"]
@@ -91,7 +101,7 @@ else:
                 else:
                     st.info(f"No Metal Pending For {o_type.title()} Orders")
 
-        # --- REPORT 2: CSR ---
+        # --- REPORT 2: CSR (UNCHANGED) ---
         elif menu == "📋 CSR":
             st.header("📋 Customer Status Report")
             status_seq = {
@@ -128,3 +138,69 @@ else:
                     st.markdown(f"""<div style="font-size:20px; font-weight:bold; border-top:1px solid #ccc; padding-top:5px; color:#1f77b4;">
                         TOTAL: {t_cust_bags} Bags | {t_cust_metal}g 18kt | {t_cust_dia:,.2f} Dia Cts
                         </div>""", unsafe_allow_html=True)
+
+        # --- NEW REPORT: BAG HISTORY ---
+        elif menu == "🔍 Bag History Report":
+            st.header("🔍 Bag History Report")
+            search_bag = st.text_input("Enter Bag Number to Search").strip()
+            
+            if search_bag:
+                # 1. Search in Master DF
+                match = df[df[col_bag].astype(str) == search_bag]
+                
+                if not match.empty:
+                    r = match.iloc[0]
+                    st.markdown("### 📦 Bag Master Details")
+                    
+                    # Layout Master Details in Columns
+                    mc1, mc2 = st.columns(2)
+                    with mc1:
+                        st.write(f"**Customer:** {r.get(col_cust, 'N/A')}")
+                        st.write(f"**Order Type:** {r.get(col_order_type, 'N/A')}")
+                        st.write(f"**Karigar:** {r.get('KARIGAR', 'N/A')}")
+                        st.write(f"**Metal:** {std_round(r.get(col_metal, 0))}g 18kt")
+                        st.write(f"**Dia Cts:** {float(r.get(col_dia, 0)):.2f}")
+                    with mc2:
+                        st.write(f"**Order Date:** {clean_date(r.get('ORDER_DATE'))}")
+                        st.write(f"**Metal Issue:** {clean_date(r.get(col_issue_dt))}")
+                        st.write(f"**Dia Issue:** {clean_date(r.get('DIAMOND_DATE'))}")
+                        st.write(f"**Delivery Date:** {clean_date(r.get('DELIVERY_DATE'))}")
+                        st.write(f"**Current Status:** {r.get(col_status, 'N/A')}")
+
+                    st.divider()
+
+                    # 2. Fetch Movement Data from SQL
+                    try:
+                        creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+                        client = bigquery.Client(credentials=creds, project=creds.project_id)
+                        
+                        # Query Pre and Post tables
+                        q_pre = f"SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement` WHERE BAG_NO = '{search_bag}'"
+                        q_post = f"SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement` WHERE BAG_NO = '{search_bag}'"
+                        
+                        df_pre_mv = client.query(q_pre).to_dataframe()
+                        df_post_mv = client.query(q_post).to_dataframe()
+
+                        # Display Movement
+                        col_left, col_right = st.columns(2)
+                        
+                        with col_left:
+                            st.info("🛠️ PRE-FINISH MOVEMENT")
+                            if not df_pre_mv.empty:
+                                df_pre_mv.columns = [c.upper().replace('_', ' ') for c in df_pre_mv.columns]
+                                st.dataframe(df_pre_mv, hide_index=True)
+                            else:
+                                st.write("No Pre-Finish records found.")
+
+                        with col_right:
+                            st.error("✨ POST-FINISH MOVEMENT")
+                            if not df_post_mv.empty:
+                                df_post_mv.columns = [c.upper().replace('_', ' ') for c in df_post_mv.columns]
+                                st.dataframe(df_post_mv, hide_index=True)
+                            else:
+                                st.write("No Post-Finish records found.")
+
+                    except Exception as mv_e:
+                        st.error(f"Error fetching movement: {mv_e}")
+                else:
+                    st.warning(f"Bag No {search_bag} not found in Master Inventory.")
