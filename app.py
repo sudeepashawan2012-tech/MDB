@@ -142,13 +142,12 @@ else:
                         TOTAL: {t_cust_bags} Bags | {t_cust_metal}g 18kt | {t_cust_dia:,.2f} Dia Cts
                         </div>""", unsafe_allow_html=True)
 
-        # --- REPORT 3: BAG HISTORY (FIXED FOR 403 ERROR & COLUMN VISIBILITY) ---
+        # --- REPORT 3: BAG HISTORY (OPTIMIZED & REFORMATTED) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
             
             if search_bag:
-                # Filter Master DataFrame
                 match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
                 
                 if not match.empty:
@@ -165,44 +164,58 @@ else:
                     with mc2:
                         st.write(f"**Order Date:** {clean_date(r.get('ORDER_DATE'))}")
                         st.write(f"**Metal Issue:** {clean_date(r.get(col_issue_dt))}")
-                        # If column name is DIAMOND_DATE or DIAMOND_ISSUE_DATE, clean_date will catch it
-                        st.write(f"**Dia Issue:** {clean_date(r.get('DIAMOND_DATE', r.get('DIAMOND_ISSUE_DATE', '---')))}") 
+                        # FIX: Check for multiple possible Diamond Issue column names
+                        dia_dt = r.get('DIA_ISSUE_DATE', r.get('DIAMOND_DATE', r.get('DIAMOND_ISSUE_DATE', '---')))
+                        st.write(f"**Dia Issue:** {clean_date(dia_dt)}") 
                         st.write(f"**Delivery Date:** {clean_date(r.get('DELIVERY_DATE'))}")
                         st.write(f"**Current Status:** {r.get(col_status, 'N/A')}")
 
                     st.divider()
 
-                    # Fetch Movement Data
                     try:
-                        # CRITICAL: Re-applying scopes here fixes the "403 Access Denied"
                         scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
                         creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
                         client = bigquery.Client(credentials=creds, project=creds.project_id)
                         
-                        q_pre = f"SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement` WHERE BAG_NO = '{search_bag}'"
-                        q_post = f"SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement` WHERE BAG_NO = '{search_bag}'"
-                        
-                        df_pre_mv = client.query(q_pre).to_dataframe()
-                        df_post_mv = client.query(q_post).to_dataframe()
+                        # Helper to display movement tables in Inward/Outward split
+                        def display_movement_section(title, table_id, bg_color_in="#E8F0FE", bg_color_out="#FEE8E8"):
+                            st.markdown(f"### {title}")
+                            query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE BAG_NO = '{search_bag}'"
+                            mv_df = client.query(query).to_dataframe()
+                            
+                            if not mv_df.empty:
+                                # Standardize column names (remove underscores)
+                                mv_df.columns = [c.replace('_', ' ').strip().upper() for c in mv_df.columns]
+                                
+                                # Split into Inward and Outward
+                                # We assume 'INWARD DATE' or 'IN DATE' etc. exists based on your schema
+                                col_in_date = next((c for c in mv_df.columns if 'IN' in c and 'DATE' in c), None)
+                                col_out_date = next((c for c in mv_df.columns if 'OUT' in c and 'DATE' in c), None)
 
-                        col_left, col_right = st.columns(2)
-                        
-                        with col_left:
-                            st.info("🛠️ PRE-FINISH MOVEMENT")
-                            if not df_pre_mv.empty:
-                                # Clean underscores from headers for clean display
-                                df_pre_mv.columns = [c.replace('_', ' ').strip() for c in df_pre_mv.columns]
-                                st.dataframe(df_pre_mv, hide_index=True, use_container_width=True)
-                            else:
-                                st.write("No Pre-Finish records found.")
+                                c_left, c_right = st.columns(2)
+                                
+                                with c_left:
+                                    st.markdown(f'<p style="background-color:{bg_color_in}; padding:10px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
+                                    in_cols = [c for c in mv_df.columns if 'IN' in c and 'BAG' not in c]
+                                    if in_cols:
+                                        st.dataframe(mv_df[in_cols].dropna(subset=[col_in_date] if col_in_date else []), hide_index=True, use_container_width=True)
+                                    else:
+                                        st.caption("No Inward columns found")
 
-                        with col_right:
-                            st.error("✨ POST-FINISH MOVEMENT")
-                            if not df_post_mv.empty:
-                                df_post_mv.columns = [c.replace('_', ' ').strip() for c in df_post_mv.columns]
-                                st.dataframe(df_post_mv, hide_index=True, use_container_width=True)
+                                with c_right:
+                                    st.markdown(f'<p style="background-color:{bg_color_out}; padding:10px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
+                                    out_cols = [c for c in mv_df.columns if 'OUT' in c and 'BAG' not in c]
+                                    if out_cols:
+                                        st.dataframe(mv_df[out_cols].dropna(subset=[col_out_date] if col_out_date else []), hide_index=True, use_container_width=True)
+                                    else:
+                                        st.caption("No Outward columns found")
                             else:
-                                st.write("No Post-Finish records found.")
+                                st.write(f"No {title} records found.")
+
+                        # Display the two sections
+                        display_movement_section("PRE-FINISH MOVEMENT", "pre_finish_movement")
+                        st.write("") # Spacer
+                        display_movement_section("POST-FINISH MOVEMENT", "post_finish_movement")
 
                     except Exception as mv_e:
                         st.error(f"Error fetching movement: {mv_e}")
