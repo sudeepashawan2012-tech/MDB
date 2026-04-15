@@ -142,7 +142,7 @@ else:
                         TOTAL: {t_cust_bags} Bags | {t_cust_metal}g 18kt | {t_cust_dia:,.2f} Dia Cts
                         </div>""", unsafe_allow_html=True)
 
-        # --- REPORT 3: BAG HISTORY (OPTIMIZED & REFORMATTED) ---
+       # --- REPORT 3: BAG HISTORY (FORMATTED & OPTIMIZED) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
@@ -164,7 +164,6 @@ else:
                     with mc2:
                         st.write(f"**Order Date:** {clean_date(r.get('ORDER_DATE'))}")
                         st.write(f"**Metal Issue:** {clean_date(r.get(col_issue_dt))}")
-                        # FIX: Check for multiple possible Diamond Issue column names
                         dia_dt = r.get('DIA_ISSUE_DATE', r.get('DIAMOND_DATE', r.get('DIAMOND_ISSUE_DATE', '---')))
                         st.write(f"**Dia Issue:** {clean_date(dia_dt)}") 
                         st.write(f"**Delivery Date:** {clean_date(r.get('DELIVERY_DATE'))}")
@@ -173,51 +172,60 @@ else:
                     st.divider()
 
                     try:
+                        # Re-auth for movement data
                         scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
                         creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
                         client = bigquery.Client(credentials=creds, project=creds.project_id)
                         
-                        # Helper to display movement tables in Inward/Outward split
-                        def display_movement_section(title, table_id, bg_color_in="#E8F0FE", bg_color_out="#FEE8E8"):
-                            st.markdown(f"### {title}")
-                            query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE BAG_NO = '{search_bag}'"
-                            mv_df = client.query(query).to_dataframe()
+                        def get_styled_df(table_name, cols):
+                            # Selecting specific columns is faster than SELECT *
+                            col_str = ", ".join(cols)
+                            q = f"SELECT {col_str} FROM `jewelry-sql-system.workshop_data.{table_name}` WHERE BAG_NO = '{search_bag}'"
+                            m_df = client.query(q).to_dataframe()
                             
-                            if not mv_df.empty:
-                                # Standardize column names (remove underscores)
-                                mv_df.columns = [c.replace('_', ' ').strip().upper() for c in mv_df.columns]
-                                
-                                # Split into Inward and Outward
-                                # We assume 'INWARD DATE' or 'IN DATE' etc. exists based on your schema
-                                col_in_date = next((c for c in mv_df.columns if 'IN' in c and 'DATE' in c), None)
-                                col_out_date = next((c for c in mv_df.columns if 'OUT' in c and 'DATE' in c), None)
+                            # Standardize column headers and format dates
+                            if not m_df.empty:
+                                for c in m_df.columns:
+                                    if 'DATE' in c.upper():
+                                        m_df[c] = pd.to_datetime(m_df[c]).dt.strftime('%d/%m/%Y')
+                                m_df.columns = [c.replace('_', ' ').strip().upper() for c in m_df.columns]
+                            return m_df
 
-                                c_left, c_right = st.columns(2)
-                                
-                                with c_left:
-                                    st.markdown(f'<p style="background-color:{bg_color_in}; padding:10px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
-                                    in_cols = [c for c in mv_df.columns if 'IN' in c and 'BAG' not in c]
-                                    if in_cols:
-                                        st.dataframe(mv_df[in_cols].dropna(subset=[col_in_date] if col_in_date else []), hide_index=True, use_container_width=True)
-                                    else:
-                                        st.caption("No Inward columns found")
+                        # --- 1. PRE-FINISH SECTION (Inward Left, Outward Right) ---
+                        st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
+                        pre_cols = ["PURPOSE_IN", "INWARD_DATE", "INWARD_TIME", "PURPOSE_OUT", "OUTWARD_DATE", "OUTWARD_TIME"]
+                        df_pre = get_styled_df("pre_finish_movement", pre_cols)
+                        
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
+                            if not df_pre.empty:
+                                st.dataframe(df_pre[["PURPOSE IN", "INWARD DATE", "INWARD TIME"]].dropna(how='all'), hide_index=True, use_container_width=True)
+                        with c2:
+                            st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
+                            if not df_pre.empty:
+                                st.dataframe(df_pre[["PURPOSE OUT", "OUTWARD DATE", "OUTWARD TIME"]].dropna(how='all'), hide_index=True, use_container_width=True)
 
-                                with c_right:
-                                    st.markdown(f'<p style="background-color:{bg_color_out}; padding:10px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
-                                    out_cols = [c for c in mv_df.columns if 'OUT' in c and 'BAG' not in c]
-                                    if out_cols:
-                                        st.dataframe(mv_df[out_cols].dropna(subset=[col_out_date] if col_out_date else []), hide_index=True, use_container_width=True)
-                                    else:
-                                        st.caption("No Outward columns found")
-                            else:
-                                st.write(f"No {title} records found.")
-
-                        # Display the two sections
-                        display_movement_section("PRE-FINISH MOVEMENT", "pre_finish_movement")
                         st.write("") # Spacer
-                        display_movement_section("POST-FINISH MOVEMENT", "post_finish_movement")
+
+                        # --- 2. POST-FINISH SECTION (Outward Left, Inward Right) ---
+                        st.markdown("### ✨ POST-FINISH MOVEMENT")
+                        post_cols = ["PURPOSE_OUT", "OUTWARD_DATE", "OUTWARD_TIME", "PURPOSE_IN", "INWARD_DATE", "INWARD_TIME"]
+                        df_post = get_styled_df("post_finish_movement", post_cols)
+                        
+                        c3, c4 = st.columns(2)
+                        with c3:
+                            # SWAPPED: Outward on the Left
+                            st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
+                            if not df_post.empty:
+                                st.dataframe(df_post[["PURPOSE OUT", "OUTWARD DATE", "OUTWARD TIME"]].dropna(how='all'), hide_index=True, use_container_width=True)
+                        with c4:
+                            # SWAPPED: Inward on the Right
+                            st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
+                            if not df_post.empty:
+                                st.dataframe(df_post[["PURPOSE IN", "INWARD DATE", "INWARD TIME"]].dropna(how='all'), hide_index=True, use_container_width=True)
 
                     except Exception as mv_e:
-                        st.error(f"Error fetching movement: {mv_e}")
+                        st.error(f"Error: {mv_e}")
                 else:
-                    st.warning(f"Bag No {search_bag} not found in Master Inventory.")
+                    st.warning(f"Bag No {search_bag} not found.")
