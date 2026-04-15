@@ -172,52 +172,58 @@ else:
 
                     st.divider()
 
-                    # SECTION 2: QC PROCESS REPORT (MAPPED TO SPECIFIC COLUMNS)
+                    # SECTION 2: QC PROCESS REPORT (SMART MAPPING)
                     st.markdown("### 📋 QC Process Report")
                     
-                    # Helper to get value from column name/letter
-                    def get_val(col_name, default="---"):
-                        return r.get(col_name, default) if pd.notna(r.get(col_name)) else default
+                    # This helper looks for the column letter even if it has underscores or spaces
+                    def find_col(letter):
+                        potential_names = [letter, f"_{letter}_", f"COLUMN_{letter}", letter.upper()]
+                        for name in potential_names:
+                            if name in match.columns:
+                                return name
+                        return None
+
+                    def get_smart_val(letter, default="---"):
+                        col = find_col(letter)
+                        if col and pd.notna(r[col]):
+                            return r[col]
+                        return default
 
                     q1, q2, q3 = st.columns(3)
                     
                     with q1:
                         st.markdown("**🛠️ GHAT DETAILS**")
-                        # Mapped: QC -> X, Wt -> Y, Date -> (Assumed from previous logic)
-                        st.write(f"QC: {get_val('X')}")
-                        st.write(f"Weight: {get_val('Y', '0')}g")
-                        st.write(f"Date: {clean_date(r.get('GHAT_DATE'))}")
+                        st.write(f"QC: {get_smart_val('X')}")
+                        st.write(f"Weight: {get_smart_val('Y', '0')}g")
+                        # Falling back to GHAT_DATE if it exists in your master df
+                        st.write(f"Date: {clean_date(r.get('GHAT_DATE', '---'))}")
                     
                     with q2:
                         st.markdown("**💎 SETTING DETAILS**")
-                        # Mapped: QC -> AH, Wt -> AY
-                        st.write(f"QC: {get_val('AH')}")
-                        st.write(f"Weight: {get_val('AY', '0')}g")
-                        st.write(f"Date: {clean_date(r.get('SETTING_DATE'))}")
+                        st.write(f"QC: {get_smart_val('AH')}")
+                        st.write(f"Weight: {get_smart_val('AY', '0')}g")
+                        st.write(f"Date: {clean_date(r.get('SETTING_DATE', '---'))}")
 
                     with q3:
                         st.markdown("**✨ FINAL FINISH**")
-                        # Mapped: QC -> AK, Wt -> AL, Date -> AM
-                        st.write(f"Final QC: {get_val('AK')}")
-                        st.write(f"Final Wt: {get_val('AL', '0')}g")
-                        st.write(f"QC Date: {clean_date(r.get('AM'))}")
-                        st.write(f"Finish Date: {clean_date(r.get('FINISH_DATE'))}")
+                        st.write(f"Final QC: {get_smart_val('AK')}")
+                        st.write(f"Final Wt: {get_smart_val('AL', '0')}g")
+                        st.write(f"QC Date: {clean_date(get_smart_val('AM'))}")
+                        st.write(f"Finish Date: {clean_date(r.get('FINISH_DATE', '---'))}")
 
                     st.markdown("---")
                     st.markdown("**🎨 COLOURSTONE DETAILS**")
                     cs1, cs2 = st.columns(2)
                     with cs1:
                         st.caption("1st Issue")
-                        # Mapped: Person -> AB, Qty -> AC, Date -> AD
-                        st.write(f"Person: {get_val('AB')}")
-                        st.write(f"Qty: {get_val('AC', '0')}")
-                        st.write(f"Date: {clean_date(r.get('AD'))}")
+                        st.write(f"Person: {get_smart_val('AB')}")
+                        st.write(f"Qty: {get_smart_val('AC', '0')}")
+                        st.write(f"Date: {clean_date(get_smart_val('AD'))}")
                     with cs2:
                         st.caption("2nd Issue")
-                        # Mapped: Person -> AE, Qty -> AF, Date -> AG
-                        st.write(f"Person: {get_val('AE')}")
-                        st.write(f"Qty: {get_val('AF', '0')}")
-                        st.write(f"Date: {clean_date(r.get('AG'))}")
+                        st.write(f"Person: {get_smart_val('AE')}")
+                        st.write(f"Qty: {get_smart_val('AF', '0')}")
+                        st.write(f"Date: {clean_date(get_smart_val('AG'))}")
 
                     st.divider()
                     
