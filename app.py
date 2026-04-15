@@ -172,27 +172,35 @@ else:
 
                     st.divider()
 
-                    # SECTION 2: QC PROCESS REPORT (NEW)
+                    # SECTION 2: QC PROCESS REPORT (MAPPED TO SPECIFIC COLUMNS)
                     st.markdown("### 📋 QC Process Report")
+                    
+                    # Helper to get value from column name/letter
+                    def get_val(col_name, default="---"):
+                        return r.get(col_name, default) if pd.notna(r.get(col_name)) else default
+
                     q1, q2, q3 = st.columns(3)
                     
                     with q1:
                         st.markdown("**🛠️ GHAT DETAILS**")
-                        st.write(f"QC: {r.get('GHAT_QC', '---')}")
-                        st.write(f"Weight: {r.get('GHAT_WT', '0')}g")
+                        # Mapped: QC -> X, Wt -> Y, Date -> (Assumed from previous logic)
+                        st.write(f"QC: {get_val('X')}")
+                        st.write(f"Weight: {get_val('Y', '0')}g")
                         st.write(f"Date: {clean_date(r.get('GHAT_DATE'))}")
                     
                     with q2:
                         st.markdown("**💎 SETTING DETAILS**")
-                        st.write(f"QC: {r.get('SETTING_QC', '---')}")
-                        st.write(f"Weight: {r.get('SETTING_WT', '0')}g")
+                        # Mapped: QC -> AH, Wt -> AY
+                        st.write(f"QC: {get_val('AH')}")
+                        st.write(f"Weight: {get_val('AY', '0')}g")
                         st.write(f"Date: {clean_date(r.get('SETTING_DATE'))}")
 
                     with q3:
                         st.markdown("**✨ FINAL FINISH**")
-                        st.write(f"Final QC: {r.get('FINAL_QC', '---')}")
-                        st.write(f"Final Wt: {r.get('FINAL_WT', '0')}g")
-                        st.write(f"QC Date: {clean_date(r.get('FINAL_QC_DATE'))}")
+                        # Mapped: QC -> AK, Wt -> AL, Date -> AM
+                        st.write(f"Final QC: {get_val('AK')}")
+                        st.write(f"Final Wt: {get_val('AL', '0')}g")
+                        st.write(f"QC Date: {clean_date(r.get('AM'))}")
                         st.write(f"Finish Date: {clean_date(r.get('FINISH_DATE'))}")
 
                     st.markdown("---")
@@ -200,17 +208,19 @@ else:
                     cs1, cs2 = st.columns(2)
                     with cs1:
                         st.caption("1st Issue")
-                        st.write(f"Stone: {r.get('COLOURSTONE', '---')}")
-                        st.write(f"Qty: {r.get('COLOURSTONE_1ST_ISSUE_QTY', '0')}")
-                        st.write(f"Date: {clean_date(r.get('COLOURSTONE_1ST_ISSUE_DATE'))}")
+                        # Mapped: Person -> AB, Qty -> AC, Date -> AD
+                        st.write(f"Person: {get_val('AB')}")
+                        st.write(f"Qty: {get_val('AC', '0')}")
+                        st.write(f"Date: {clean_date(r.get('AD'))}")
                     with cs2:
                         st.caption("2nd Issue")
-                        st.write(f"Stone: {r.get('COLOURSTONE', '---')}")
-                        st.write(f"Qty: {r.get('COLOURSTONE_2ND_ISSUE_QTY', '0')}")
-                        st.write(f"Date: {clean_date(r.get('COLOURSTONE_2ND_ISSUE_DATE'))}")
+                        # Mapped: Person -> AE, Qty -> AF, Date -> AG
+                        st.write(f"Person: {get_val('AE')}")
+                        st.write(f"Qty: {get_val('AF', '0')}")
+                        st.write(f"Date: {clean_date(r.get('AG'))}")
 
                     st.divider()
-
+                    
                     # SECTION 3: MOVEMENT DATA (PRE & POST)
                     try:
                         scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
