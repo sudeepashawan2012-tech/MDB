@@ -142,7 +142,7 @@ else:
                         TOTAL: {t_cust_bags} Bags | {t_cust_metal}g 18kt | {t_cust_dia:,.2f} Dia Cts
                         </div>""", unsafe_allow_html=True)
 
-       # --- REPORT 3: BAG HISTORY (FORMATTED & OPTIMIZED) ---
+       # --- REPORT 3: BAG HISTORY (STABLE VERSION) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
@@ -172,60 +172,64 @@ else:
                     st.divider()
 
                     try:
-                        # Re-auth for movement data
                         scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
                         creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
                         client = bigquery.Client(credentials=creds, project=creds.project_id)
                         
-                        def get_styled_df(table_name, cols):
-                            # Selecting specific columns is faster than SELECT *
-                            col_str = ", ".join(cols)
-                            q = f"SELECT {col_str} FROM `jewelry-sql-system.workshop_data.{table_name}` WHERE BAG_NO = '{search_bag}'"
-                            m_df = client.query(q).to_dataframe()
+                        def get_movement_data(table_id):
+                            # We use SELECT * here to avoid 'Unrecognized Name' errors, 
+                            # then we filter columns inside Python for speed/formatting.
+                            query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE BAG_NO = '{search_bag}'"
+                            m_df = client.query(query).to_dataframe()
+                            if m_df.empty: return m_df
                             
-                            # Standardize column headers and format dates
-                            if not m_df.empty:
-                                for c in m_df.columns:
-                                    if 'DATE' in c.upper():
-                                        m_df[c] = pd.to_datetime(m_df[c]).dt.strftime('%d/%m/%Y')
-                                m_df.columns = [c.replace('_', ' ').strip().upper() for c in m_df.columns]
+                            # Standardize column names for logic (Strip spaces/dots)
+                            m_df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in m_df.columns]
+                            
+                            # Format any column that looks like a date
+                            for c in m_df.columns:
+                                if 'DATE' in c:
+                                    m_df[c] = pd.to_datetime(m_df[c], errors='coerce').dt.strftime('%d/%m/%Y')
                             return m_df
 
-                        # --- 1. PRE-FINISH SECTION (Inward Left, Outward Right) ---
+                        # --- 1. PRE-FINISH MOVEMENT ---
                         st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
-                        pre_cols = ["PURPOSE_IN", "INWARD_DATE", "INWARD_TIME", "PURPOSE_OUT", "OUTWARD_DATE", "OUTWARD_TIME"]
-                        df_pre = get_styled_df("pre_finish_movement", pre_cols)
+                        df_pre = get_movement_data("pre_finish_movement")
                         
                         c1, c2 = st.columns(2)
                         with c1:
                             st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
                             if not df_pre.empty:
-                                st.dataframe(df_pre[["PURPOSE IN", "INWARD DATE", "INWARD TIME"]].dropna(how='all'), hide_index=True, use_container_width=True)
+                                # Find columns that contain 'IN' but NOT 'OUT'
+                                cols = [c for c in df_pre.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
+                                st.dataframe(df_pre[cols].dropna(how='all'), hide_index=True, use_container_width=True)
                         with c2:
                             st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
                             if not df_pre.empty:
-                                st.dataframe(df_pre[["PURPOSE OUT", "OUTWARD DATE", "OUTWARD TIME"]].dropna(how='all'), hide_index=True, use_container_width=True)
+                                cols = [c for c in df_pre.columns if 'OUT' in c and 'BAG' not in c]
+                                st.dataframe(df_pre[cols].dropna(how='all'), hide_index=True, use_container_width=True)
 
-                        st.write("") # Spacer
+                        st.write("") 
 
-                        # --- 2. POST-FINISH SECTION (Outward Left, Inward Right) ---
+                        # --- 2. POST-FINISH MOVEMENT (SWAPPED SIDES) ---
                         st.markdown("### ✨ POST-FINISH MOVEMENT")
-                        post_cols = ["PURPOSE_OUT", "OUTWARD_DATE", "OUTWARD_TIME", "PURPOSE_IN", "INWARD_DATE", "INWARD_TIME"]
-                        df_post = get_styled_df("post_finish_movement", post_cols)
+                        df_post = get_movement_data("post_finish_movement")
                         
                         c3, c4 = st.columns(2)
                         with c3:
-                            # SWAPPED: Outward on the Left
+                            # OUTWARD ON LEFT
                             st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
                             if not df_post.empty:
-                                st.dataframe(df_post[["PURPOSE OUT", "OUTWARD DATE", "OUTWARD TIME"]].dropna(how='all'), hide_index=True, use_container_width=True)
+                                cols = [c for c in df_post.columns if 'OUT' in c and 'BAG' not in c]
+                                st.dataframe(df_post[cols].dropna(how='all'), hide_index=True, use_container_width=True)
                         with c4:
-                            # SWAPPED: Inward on the Right
+                            # INWARD ON RIGHT
                             st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
                             if not df_post.empty:
-                                st.dataframe(df_post[["PURPOSE IN", "INWARD DATE", "INWARD TIME"]].dropna(how='all'), hide_index=True, use_container_width=True)
+                                cols = [c for c in df_post.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
+                                st.dataframe(df_post[cols].dropna(how='all'), hide_index=True, use_container_width=True)
 
                     except Exception as mv_e:
-                        st.error(f"Error: {mv_e}")
+                        st.error(f"Data Error: {mv_e}")
                 else:
                     st.warning(f"Bag No {search_bag} not found.")
