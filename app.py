@@ -145,53 +145,80 @@ else:
 
         # --- NEW REPORT: SCOPE OF WORK ---
         elif menu == "📋 Scope of Work":
-            st.header("📋 Customer Scope of Work")
+            st.header("📋 Scope of Work")
             
-            # Identify which bags are issued based on date presence
+            # 1. PREPARE DATA
+            # Issued: Date is present | Pending: Date is blank/NaN
             issued_mask = df[col_issue_dt].notna() & (df[col_issue_dt].astype(str).str.strip() != "")
             
-            def get_scope_summary(data):
-                if data.empty: return pd.DataFrame()
+            def get_formatted_summary(data):
+                if data.empty:
+                    return pd.DataFrame(columns=['Customer Name', 'Ord Qty', 'Metal 18kt', 'Dia Cts'])
                 
-                # Split and Aggregate
-                issued_df = data[issued_mask]
-                pending_df = data[~issued_mask]
+                grp = data.groupby(col_cust).agg({
+                    col_bag: 'count',
+                    col_metal: 'sum',
+                    col_dia: 'sum'
+                }).reset_index()
                 
-                iss_grp = issued_df.groupby(col_cust).agg({col_bag: 'count', col_metal: 'sum'}).rename(
-                    columns={col_bag: 'Issued Ord Qty', col_metal: 'Issued Metal'}
-                )
-                pen_grp = pending_df.groupby(col_cust).agg({col_bag: 'count', col_metal: 'sum'}).rename(
-                    columns={col_bag: 'Pending Ord Qty', col_metal: 'Pending Metal'}
-                )
-                
-                combined = pd.concat([iss_grp, pen_grp], axis=1).fillna(0)
-                combined['Total Ord Qty'] = combined['Issued Ord Qty'] + combined['Pending Ord Qty']
-                combined['Total Metal'] = combined['Issued Metal'] + combined['Pending Metal']
-                
-                # Format numbers
-                for c in ['Issued Metal', 'Pending Metal', 'Total Metal']:
-                    combined[c] = combined[c].apply(std_round)
-                for c in ['Issued Ord Qty', 'Pending Ord Qty', 'Total Ord Qty']:
-                    combined[c] = combined[c].astype(int)
-                    
-                return combined.reset_index().rename(columns={col_cust: 'Customer'})
+                grp.columns = ['Customer Name', 'Ord Qty', 'Metal 18kt', 'Dia Cts']
+                grp['Metal 18kt'] = grp['Metal 18kt'].apply(std_round)
+                grp['Dia Cts'] = grp['Dia Cts'].map('{:,.2f}'.format)
+                return grp
 
-            st.subheader("📍 CUSTOMER ORDERS")
-            c_data = df[df[col_order_type].str.contains("CUSTOMER", case=False, na=False)]
-            if not c_data.empty:
-                st.dataframe(get_scope_summary(c_data), hide_index=True, use_container_width=True)
-            else:
-                st.info("No Customer Orders Found")
-
+            # 2. GRAND TOTAL SECTION
+            st.subheader("📊 Total Scope of Work")
+            gt_bags = df[col_bag].count()
+            gt_metal = std_round(df[col_metal].sum())
+            gt_dia = df[col_dia].sum()
+            
+            cols_gt = st.columns(3)
+            cols_gt[0].metric("Total Ord Qty", f"{gt_bags}")
+            cols_gt[1].metric("Total Metal 18kt", f"{gt_metal}g")
+            cols_gt[2].metric("Total Dia Cts", f"{gt_dia:,.2f}")
             st.divider()
 
-            st.subheader("📍 STOCK ORDERS")
-            s_data = df[df[col_order_type].str.contains("STOCK", case=False, na=False)]
-            if not s_data.empty:
-                st.dataframe(get_scope_summary(s_data), hide_index=True, use_container_width=True)
+            # 3. CUSTOMER ORDERS
+            st.markdown("### 👤 Customer Orders")
+            cust_data = df[df[col_order_type].str.contains("CUSTOMER", case=False, na=False)]
+            if not cust_data.empty:
+                df_cust = get_formatted_summary(cust_data)
+                st.table(df_cust)
+                st.markdown(f"**Total Customer Orders:** {cust_data[col_bag].count()} Bags | {std_round(cust_data[col_metal].sum())}g Metal | {cust_data[col_dia].sum():,.2f} Dia")
             else:
-                st.info("No Stock Orders Found")
+                st.info("No Customer Orders found.")
 
+            # 4. STOCK ORDERS
+            st.markdown("### 🏢 Stock Orders")
+            stock_data = df[df[col_order_type].str.contains("STOCK", case=False, na=False)]
+            if not stock_data.empty:
+                df_stock = get_formatted_summary(stock_data)
+                st.table(df_stock)
+                st.markdown(f"**Total Stock Orders:** {stock_data[col_bag].count()} Bags | {std_round(stock_data[col_metal].sum())}g Metal | {stock_data[col_dia].sum():,.2f} Dia")
+            else:
+                st.info("No Stock Orders found.")
+            
+            st.divider()
+
+            # 5. METAL ISSUED
+            st.markdown("### ✅ Metal Issued")
+            issued_data = df[issued_mask]
+            if not issued_data.empty:
+                df_issued = get_formatted_summary(issued_data)
+                st.table(df_issued)
+                st.markdown(f"**Total Metal Issued:** {issued_data[col_bag].count()} Bags | {std_round(issued_data[col_metal].sum())}g Metal | {issued_data[col_dia].sum():,.2f} Dia")
+            else:
+                st.info("No Metal Issued records found.")
+
+            # 6. METAL PENDING
+            st.markdown("### ⏳ Metal Pending")
+            pending_data = df[~issued_mask]
+            if not pending_data.empty:
+                df_pending = get_formatted_summary(pending_data)
+                st.table(df_pending)
+                st.markdown(f"**Total Metal Pending:** {pending_data[col_bag].count()} Bags | {std_round(pending_data[col_metal].sum())}g Metal | {pending_data[col_dia].sum():,.2f} Dia")
+            else:
+                st.info("No Metal Pending records found.")
         # --- REPORT 3: BAG HISTORY (UNCHANGED) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
