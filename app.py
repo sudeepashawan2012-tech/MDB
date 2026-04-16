@@ -10,7 +10,6 @@ st.set_page_config(page_title="WORKSHOP REPORTS", layout="wide")
 @st.cache_data(ttl=300)
 def fetch_data():
     try:
-        # These scopes are required to let BigQuery "talk" to your Google Sheets
         scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
         creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
         client = bigquery.Client(credentials=creds, project=creds.project_id)
@@ -18,10 +17,8 @@ def fetch_data():
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
         df = client.query(query).to_dataframe()
         
-        # Standardize Master headers
         df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
         
-        # Remove blank rows
         col_cust_check = next((c for c in df.columns if 'CUSTOMER' in c), None)
         if col_cust_check:
             df = df.dropna(subset=[col_cust_check])
@@ -37,14 +34,11 @@ def std_round(x):
     except: return 0
 
 def clean_date(dt):
-    """Formats SQL dates to DD-Mon-YYYY (e.g., 14-Apr-2026)"""
     try:
         if pd.isna(dt) or str(dt).strip() == "" or str(dt) == "None": return "---"
-        if isinstance(dt, str):
-            dt = pd.to_datetime(dt)
+        if isinstance(dt, str): dt = pd.to_datetime(dt)
         return dt.strftime('%d-%b-%Y')
-    except:
-        return str(dt)
+    except: return str(dt)
 
 # 2. RUN APP
 if "password_correct" not in st.session_state:
@@ -58,7 +52,6 @@ else:
     df = fetch_data()
 
     if df is not None:
-        # Dynamic Column Mapping for main reports
         col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
         col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
         col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
@@ -70,10 +63,9 @@ else:
         df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
         df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
-        # UPDATED MENU WITH NEW REPORT
         menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report"])
 
-        # --- REPORT 1: METAL REQUIREMENTS (UNCHANGED) ---
+        # --- REPORT 1: METAL REQUIREMENTS ---
         if menu == "📊 Metal Requirements":
             st.header("📊 Metal Requirement Report")
             exclude = ["HOLD", "CANCEL"]
@@ -83,218 +75,127 @@ else:
             for o_type in ["CUSTOMER", "STOCK"]:
                 st.subheader(f"📍 {o_type} ORDERS")
                 sub_data = pending_df[pending_df[col_order_type].str.contains(o_type.split()[0], case=False, na=False)]
-                
                 if not sub_data.empty:
-                    summary = sub_data.groupby(col_cust).agg({
-                        col_bag: 'count',
-                        col_metal: 'sum',
-                        col_dia: 'sum'
-                    }).reset_index()
-                    
+                    summary = sub_data.groupby(col_cust).agg({col_bag: 'count', col_metal: 'sum', col_dia: 'sum'}).reset_index()
                     summary.columns = ['Customer Code', 'Bag Qty', 'Metal 18kt', 'Dia Cts']
                     summary['Metal 18kt'] = summary['Metal 18kt'].apply(std_round)
                     summary['Dia Cts'] = summary['Dia Cts'].map('{:,.2f}'.format)
                     st.table(summary)
-                    
-                    t_bags = sub_data[col_bag].count()
-                    t_metal = std_round(sub_data[col_metal].sum())
-                    t_dia = sub_data[col_dia].sum()
-                    st.markdown(f"""<div style="font-size:22px; font-weight:bold; border-top:2px solid #eee; padding-top:10px;">
-                        SUBTOTAL: {t_bags} Bags | {t_metal}g 18kt | {t_dia:,.2f} Dia Cts
-                        </div>""", unsafe_allow_html=True)
-                else:
-                    st.info(f"No Metal Pending For {o_type.title()} Orders")
 
-        # --- REPORT 2: CSR (UNCHANGED) ---
+        # --- REPORT 2: CSR ---
         elif menu == "📋 CSR":
             st.header("📋 Customer Status Report")
-            status_seq = {
-                "SEQUENCE": 0, "ENGRAVING/HUID": 1, "IGI": 2, "ON HAND": 3, 
-                "FINAL QC": 4, "SETTING QC OK": 5, "SETTING": 6, "GHAT OK": 7, 
-                "CASTING": 8, "METAL ISSUED": 9, "METAL PENDING": 10, 
-                "HOLD": 12, "CANCEL": 13
-            }
-            
+            status_seq = {"SEQUENCE": 0, "ENGRAVING/HUID": 1, "IGI": 2, "ON HAND": 3, "FINAL QC": 4, "SETTING QC OK": 5, "SETTING": 6, "GHAT OK": 7, "CASTING": 8, "METAL ISSUED": 9, "METAL PENDING": 10, "HOLD": 12, "CANCEL": 13}
             csr_df = df.copy()
             csr_df['Seq'] = csr_df[col_status].map(status_seq).fillna(99)
-            customers = sorted(csr_df[col_cust].unique())
-            
-            for cust in customers:
+            for cust in sorted(csr_df[col_cust].unique()):
                 with st.expander(f"👤 CUSTOMER: {cust}"):
                     cust_data = csr_df[csr_df[col_cust] == cust]
-                    summary = cust_data.groupby([col_status, 'Seq']).agg({
-                        col_bag: 'count',
-                        col_metal: 'sum',
-                        col_dia: 'sum'
-                    }).reset_index().sort_values('Seq')
-                    
+                    summary = cust_data.groupby([col_status, 'Seq']).agg({col_bag: 'count', col_metal: 'sum', col_dia: 'sum'}).reset_index().sort_values('Seq')
                     summary['Metal 18kt'] = summary[col_metal].apply(std_round)
                     summary['Dia Cts'] = summary[col_dia].map('{:,.2f}'.format)
-                    
-                    display_tab = summary[[col_status, col_bag, 'Metal 18kt', 'Dia Cts']].rename(
-                        columns={col_status: 'Status', col_bag: 'Bag Qty'}
-                    )
-                    st.dataframe(display_tab, hide_index=True, use_container_width=True)
-                    
-                    t_cust_bags = summary[col_bag].sum()
-                    t_cust_metal = std_round(summary[col_metal].sum())
-                    t_cust_dia = summary[col_dia].sum()
-                    st.markdown(f"""<div style="font-size:20px; font-weight:bold; border-top:1px solid #ccc; padding-top:5px; color:#1f77b4;">
-                        TOTAL: {t_cust_bags} Bags | {t_cust_metal}g 18kt | {t_cust_dia:,.2f} Dia Cts
-                        </div>""", unsafe_allow_html=True)
+                    st.dataframe(summary[[col_status, col_bag, 'Metal 18kt', 'Dia Cts']].rename(columns={col_status: 'Status', col_bag: 'Bag Qty'}), hide_index=True, use_container_width=True)
 
         # --- NEW REPORT: SCOPE OF WORK ---
         elif menu == "📋 Scope of Work":
             st.header("📋 Scope of Work")
-            
-            # 1. DATA PREPARATION
             issued_mask = df[col_issue_dt].notna() & (df[col_issue_dt].astype(str).str.strip() != "")
             is_cust = df[col_order_type].str.contains("CUSTOMER", case=False, na=False)
             is_stock = df[col_order_type].str.contains("STOCK", case=False, na=False)
             
-            # Helper for consistent table formatting with a TOTAL row
             def get_report_table(data):
-                if data.empty:
-                    return None
-                
-                # Group data by Customer
-                grp = data.groupby(col_cust).agg({
-                    col_bag: 'count',
-                    col_metal: 'sum',
-                    col_dia: 'sum'
-                }).reset_index()
+                if data.empty: return None
+                grp = data.groupby(col_cust).agg({col_bag: 'count', col_metal: 'sum', col_dia: 'sum'}).reset_index()
                 grp.columns = ['Customer Name', 'Ord Qty', 'Metal 18kt', 'Dia Cts']
-                
-                # Calculate Totals for the bottom row
-                total_qty = grp['Ord Qty'].sum()
-                total_metal = grp['Metal 18kt'].sum()
-                total_dia = grp['Dia Cts'].sum()
-                
-                # Create the total row
-                total_row = pd.DataFrame([{
-                    'Customer Name': 'TOTAL',
-                    'Ord Qty': total_qty,
-                    'Metal 18kt': total_metal,
-                    'Dia Cts': total_dia
-                }])
-                
-                # Append total row to the dataframe
+                # Calculation before string formatting
+                total_row = pd.DataFrame([{'Customer Name': 'TOTAL', 'Ord Qty': grp['Ord Qty'].sum(), 'Metal 18kt': grp['Metal 18kt'].sum(), 'Dia Cts': grp['Dia Cts'].sum()}])
                 final_df = pd.concat([grp, total_row], ignore_index=True)
-                
-                # Final Formatting
                 final_df['Metal 18kt'] = final_df['Metal 18kt'].apply(std_round)
                 final_df['Dia Cts'] = final_df['Dia Cts'].map('{:,.2f}'.format)
-                
                 return final_df
 
-            def display_section(title, data):
+            def display_scope_section(title, data):
                 st.markdown(f"### {title}")
-                table = get_report_table(data)
-                if table is not None:
-                    # Styling the total row to stand out (Optional: using st.table)
-                    st.table(table)
-                else:
-                    st.info(f"No data available for {title}")
+                tbl = get_report_table(data)
+                if tbl is not None: st.table(tbl)
+                else: st.info(f"No data for {title}")
                 st.divider()
 
-            # --- 2. TOTAL SCOPE OF WORK (GRAND TOTAL) ---
+            # Grand Total
             st.subheader("📊 Total Scope of Work")
-            gt_bags = df[col_bag].count()
-            gt_metal = std_round(df[col_metal].sum())
-            gt_dia = df[col_dia].sum()
+            st.markdown(f"""<div style="background-color:#1E1E1E; padding:20px; border-radius:10px; text-align:center; color:white; border:1px solid #444;">
+                <b>{df[col_bag].count()} Ord Qty | {std_round(df[col_metal].sum())} Metal 18kt | {df[col_dia].sum():,.2f} Dia Cts</b></div>""", unsafe_allow_html=True)
             
-            st.markdown(f"""
-                <div style="background-color:#1E1E1E; padding:25px; border-radius:10px; border:2px solid #4F4F4F; text-align:center; color: white;">
-                    <div style="font-size:16px; letter-spacing: 2px; color: #BBBBBB;">GRAND TOTAL</div>
-                    <div style="font-size:28px; font-weight:bold; margin-top:10px;">
-                        {gt_bags} Ord Qty &nbsp; | &nbsp; {gt_metal} Metal 18kt &nbsp; | &nbsp; {gt_dia:,.2f} Dia Cts
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
-            st.write("") 
+            display_scope_section("Customer Orders", df[is_cust])
+            display_scope_section("Stock Orders", df[is_stock])
+            display_scope_section("Metal Issued Customer Orders", df[issued_mask & is_cust])
+            display_scope_section("Metal Pending Customer Orders", df[~issued_mask & is_cust])
+            display_scope_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
+            display_scope_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
 
-            # --- 3. THE TWO MAIN SUMMARIES ---
-            display_section("Customer Orders", df[is_cust])
-            display_section("Stock Orders", df[is_stock])
-            
-            # --- 4. THE FOUR-WAY BREAKDOWN ---
-            st.subheader("🔍 Detailed Breakdown (Issued vs Pending)")
-            
-            display_section("Metal Issued Customer Orders", df[issued_mask & is_cust])
-            display_section("Metal Pending Customer Orders", df[~issued_mask & is_cust])
-            display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
-            display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
-               # --- REPORT 3: BAG HISTORY (HIGH-SPEED VERSION) ---
+        # --- REPORT 3: BAG HISTORY ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
-            search_bag = st.text_input("Enter Bag Number to Search").strip()
-            
+            search_bag = st.text_input("Enter Bag Number").strip()
             if search_bag:
                 match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
-                
                 if not match.empty:
                     r = match.iloc[0]
-                    
-                    # --- SECTION 1 & 2: MASTER & QC (Same as before) ---
+                    # Part 1: Master
                     st.markdown("### 📦 Bag Master Details")
-                    mc1, mc2 = st.columns(2)
-                    with mc1:
-                        st.write(f"**Customer:** {r.get(col_cust, 'N/A')}")
-                        st.write(f"**Karigar:** {r.get('KARIGAR', 'N/A')}")
-                        st.write(f"**Metal:** {std_round(r.get(col_metal, 0))}g 18kt")
-                    with mc2:
-                        st.write(f"**Order Date:** {clean_date(r.get('ORDER_DATE'))}")
-                        st.write(f"**Current Status:** {r.get(col_status, 'N/A')}")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.write(f"**Customer:** {r.get(col_cust)}")
+                        st.write(f"**Metal:** {std_round(r.get(col_metal))}g")
+                    with c2:
+                        st.write(f"**Status:** {r.get(col_status)}")
+                        st.write(f"**Metal Issue:** {clean_date(r.get(col_issue_dt))}")
+                    
+                    st.divider()
+                    
+                    # Part 2: QC Process (The "Middle" Part)
+                    st.markdown("### 📋 QC Process Report")
+                    def get_v(l):
+                        for c in match.columns:
+                            if l.upper() in [c, f'_{l}_', f'COLUMN_{l}']: return r[c]
+                        return "---"
+                    
+                    q1, q2, q3 = st.columns(3)
+                    with q1: st.write("**🛠️ GHAT**"); st.write(f"QC: {get_v('X')}"); st.write(f"Wt: {get_v('Y')}g")
+                    with q2: st.write("**💎 SETTING**"); st.write(f"QC: {get_v('AH')}"); st.write(f"Wt: {get_v('AY')}g")
+                    with q3: st.write("**✨ FINISH**"); st.write(f"QC: {get_v('AK')}"); st.write(f"Wt: {get_v('AL')}g")
 
                     st.divider()
 
-                    # --- SECTION 3: MOVEMENT DATA (OPTIMIZED & CACHED) ---
-                    # Defining a cached function inside to speed up repetitive searches
-                    @st.cache_data(ttl=60)
-                    def get_cached_movement(table_id, b_no):
-                        # Use the global client or re-init once
-                        query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE CAST(BAG_NO AS STRING) = '{str(b_no)}'"
-                        return client.query(query).to_dataframe()
-
+                    # Part 3: Movements (Restored & Fixed)
                     try:
-                        with st.spinner('Fetching Movement Logs...'):
-                            # PRE-FINISH
-                            st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
-                            df_pre = get_cached_movement("pre_finish_movement", search_bag)
-                            
-                            if not df_pre.empty:
-                                df_pre.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in df_pre.columns]
-                                c1, c2 = st.columns(2)
-                                with c1:
-                                    st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
-                                    in_cols = [c for c in df_pre.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
-                                    st.dataframe(df_pre[in_cols], hide_index=True, use_container_width=True)
-                                with c2:
-                                    st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
-                                    out_cols = [c for c in df_pre.columns if 'OUT' in c and 'BAG' not in c]
-                                    st.dataframe(df_pre[out_cols], hide_index=True, use_container_width=True)
-                            else:
-                                st.info("No Pre-Finish records found for this bag.")
+                        creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=["https://www.googleapis.com/auth/bigquery"])
+                        client = bigquery.Client(credentials=creds, project=creds.project_id)
+                        
+                        def get_move(tid):
+                            # CAST prevents blank tables caused by string/int mismatch
+                            q = f"SELECT * FROM `jewelry-sql-system.workshop_data.{tid}` WHERE CAST(BAG_NO AS STRING) = '{search_bag}'"
+                            mdf = client.query(q).to_dataframe()
+                            if not mdf.empty:
+                                mdf.columns = [str(c).upper().replace(' ', '_') for c in mdf.columns]
+                                for c in mdf.columns:
+                                    if 'DATE' in c: mdf[c] = pd.to_datetime(mdf[c], errors='coerce').dt.strftime('%d/%m/%Y')
+                            return mdf
 
-                            # POST-FINISH
-                            st.markdown("### ✨ POST-FINISH MOVEMENT")
-                            df_post = get_cached_movement("post_finish_movement", search_bag)
-                            
-                            if not df_post.empty:
-                                df_post.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in df_post.columns]
-                                c3, c4 = st.columns(2)
-                                with c3:
-                                    st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
-                                    out_cols = [c for c in df_post.columns if 'OUT' in c and 'BAG' not in c]
-                                    st.dataframe(df_post[out_cols], hide_index=True, use_container_width=True)
-                                with c4:
-                                    st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
-                                    in_cols = [c for c in df_post.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
-                                    st.dataframe(df_post[in_cols], hide_index=True, use_container_width=True)
-                            else:
-                                st.info("No Post-Finish records found.")
+                        st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
+                        df_pre = get_move("pre_finish_movement")
+                        if not df_pre.empty:
+                            m1, m2 = st.columns(2)
+                            m1.markdown("**Inward**"); m1.dataframe(df_pre[[c for c in df_pre.columns if 'IN' in c or 'PURPOSE' in c]], hide_index=True)
+                            m2.markdown("**Outward**"); m2.dataframe(df_pre[[c for c in df_pre.columns if 'OUT' in c]], hide_index=True)
+                        else: st.info("No Pre-Finish records.")
 
-                    except Exception as mv_e:
-                        st.error(f"Movement Sync Error: {mv_e}")
-                else:
-                    st.warning(f"Bag No {search_bag} not found.")
+                        st.markdown("### ✨ POST-FINISH MOVEMENT")
+                        df_post = get_move("post_finish_movement")
+                        if not df_post.empty:
+                            m3, m4 = st.columns(2)
+                            m3.markdown("**Outward**"); m3.dataframe(df_post[[c for c in df_post.columns if 'OUT' in c]], hide_index=True)
+                            m4.markdown("**Inward**"); m4.dataframe(df_post[[c for c in df_post.columns if 'IN' in c]], hide_index=True)
+                        else: st.info("No Post-Finish records.")
+                    except Exception as e: st.error(f"Movement Error: {e}")
+                else: st.warning("Bag not found.")
