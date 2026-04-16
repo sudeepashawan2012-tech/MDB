@@ -166,12 +166,8 @@ else:
                 grp['Dia Cts'] = grp['Dia Cts'].map('{:,.2f}'.format)
                 return grp
 
-            def display_section(title, data, is_sub=False):
-                if is_sub:
-                    st.markdown(f"#### {title}")
-                else:
-                    st.subheader(f"📍 {title}")
-                
+            def display_section(title, data):
+                st.markdown(f"### {title}")
                 table = get_report_table(data)
                 if table is not None:
                     st.table(table)
@@ -181,7 +177,7 @@ else:
                     st.markdown(f"**Total {title}:** {t_qty} Bags | {t_met}g Metal | {t_dia:,.2f} Dia Cts")
                 else:
                     st.info(f"No data available for {title}")
-                st.write("") 
+                st.divider()
 
             # --- 2. TOTAL SCOPE OF WORK (GRAND TOTAL) ---
             st.subheader("📊 Total Scope of Work")
@@ -189,36 +185,29 @@ else:
             gt_metal = std_round(df[col_metal].sum())
             gt_dia = df[col_dia].sum()
             
-            # Displaying as a neat summary row
+            # Updated Styling for visibility (Dark box with white/bold text)
             st.markdown(f"""
-                <div style="background-color:#f9f9f9; padding:20px; border-radius:10px; border:1px solid #ddd; text-align:center;">
-                    <span style="font-size:18px; color:#555;">GRAND TOTAL</span><br>
-                    <span style="font-size:24px; font-weight:bold;">{gt_bags} Ord Qty | {gt_metal} Metal 18kt | {gt_dia:,.2f} Dia Cts</span>
+                <div style="background-color:#1E1E1E; padding:25px; border-radius:10px; border:2px solid #4F4F4F; text-align:center; color: white;">
+                    <div style="font-size:16px; letter-spacing: 2px; color: #BBBBBB;">GRAND TOTAL</div>
+                    <div style="font-size:28px; font-weight:bold; margin-top:10px;">
+                        {gt_bags} Ord Qty &nbsp; | &nbsp; {gt_metal} Metal 18kt &nbsp; | &nbsp; {gt_dia:,.2f} Dia Cts
+                    </div>
                 </div>
             """, unsafe_allow_html=True)
-            st.divider()
+            st.write("") 
 
             # --- 3. THE TWO MAIN SUMMARIES ---
-            # Customer Orders Summary
             display_section("Customer Orders", df[is_cust])
-            
-            # Stock Orders Summary
             display_section("Stock Orders", df[is_stock])
             
-            st.divider()
-
-            # --- 4. THE FOUR-WAY BREAKDOWN ---
+            # --- 4. THE FOUR-WAY BREAKDOWN (NOW VERTICAL) ---
             st.subheader("🔍 Detailed Breakdown (Issued vs Pending)")
+            st.write("Below tables show the status split for all orders:")
             
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                display_section("Metal Issued Customer Orders", df[issued_mask & is_cust], is_sub=True)
-                display_section("Metal Issued Stock Orders", df[issued_mask & is_stock], is_sub=True)
-                
-            with col2:
-                display_section("Metal Pending Customer Orders", df[~issued_mask & is_cust], is_sub=True)
-                display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock], is_sub=True)
+            display_section("Metal Issued Customer Orders", df[issued_mask & is_cust])
+            display_section("Metal Pending Customer Orders", df[~issued_mask & is_cust])
+            display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
+            display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
                 # --- REPORT 3: BAG HISTORY (UNCHANGED) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
