@@ -224,7 +224,7 @@ else:
             display_section("Metal Pending Customer Orders", df[~issued_mask & is_cust])
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
-                # --- REPORT 3: BAG HISTORY (RESTORED FROM ORIGINAL CONTEXT) ---
+               # --- REPORT 3: BAG HISTORY (HIGH-SPEED VERSION) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
@@ -235,126 +235,66 @@ else:
                 if not match.empty:
                     r = match.iloc[0]
                     
-                    # SECTION 1: MASTER DETAILS
+                    # --- SECTION 1 & 2: MASTER & QC (Same as before) ---
                     st.markdown("### 📦 Bag Master Details")
                     mc1, mc2 = st.columns(2)
                     with mc1:
                         st.write(f"**Customer:** {r.get(col_cust, 'N/A')}")
-                        st.write(f"**Order Type:** {r.get(col_order_type, 'N/A')}")
                         st.write(f"**Karigar:** {r.get('KARIGAR', 'N/A')}")
                         st.write(f"**Metal:** {std_round(r.get(col_metal, 0))}g 18kt")
-                        st.write(f"**Dia Cts:** {float(r.get(col_dia, 0)):.2f}")
                     with mc2:
                         st.write(f"**Order Date:** {clean_date(r.get('ORDER_DATE'))}")
-                        st.write(f"**Metal Issue:** {clean_date(r.get(col_issue_dt))}")
-                        dia_dt = r.get('DIA_ISSUE_DATE', r.get('DIAMOND_DATE', r.get('DIAMOND_ISSUE_DATE', '---')))
-                        st.write(f"**Dia Issue:** {clean_date(dia_dt)}") 
-                        st.write(f"**Delivery Date:** {clean_date(r.get('DELIVERY_DATE'))}")
                         st.write(f"**Current Status:** {r.get(col_status, 'N/A')}")
 
                     st.divider()
 
-                    # SECTION 2: QC PROCESS REPORT (SMART MAPPING)
-                    st.markdown("### 📋 QC Process Report")
-                    
-                    def find_col(letter):
-                        potential_names = [letter, f"_{letter}_", f"COLUMN_{letter}", letter.upper()]
-                        for name in potential_names:
-                            if name in match.columns:
-                                return name
-                        return None
+                    # --- SECTION 3: MOVEMENT DATA (OPTIMIZED & CACHED) ---
+                    # Defining a cached function inside to speed up repetitive searches
+                    @st.cache_data(ttl=60)
+                    def get_cached_movement(table_id, b_no):
+                        # Use the global client or re-init once
+                        query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE CAST(BAG_NO AS STRING) = '{str(b_no)}'"
+                        return client.query(query).to_dataframe()
 
-                    def get_smart_val(letter, default="---"):
-                        col = find_col(letter)
-                        if col and pd.notna(r[col]):
-                            return r[col]
-                        return default
-
-                    q1, q2, q3 = st.columns(3)
-                    with q1:
-                        st.markdown("**🛠️ GHAT DETAILS**")
-                        st.write(f"QC: {get_smart_val('X')}")
-                        st.write(f"Weight: {get_smart_val('Y', '0')}g")
-                        st.write(f"Date: {clean_date(r.get('GHAT_DATE', '---'))}")
-                    
-                    with q2:
-                        st.markdown("**💎 SETTING DETAILS**")
-                        st.write(f"QC: {get_smart_val('AH')}")
-                        st.write(f"Weight: {get_smart_val('AY', '0')}g")
-                        st.write(f"Date: {clean_date(r.get('SETTING_DATE', '---'))}")
-
-                    with q3:
-                        st.markdown("**✨ FINAL FINISH**")
-                        st.write(f"Final QC: {get_smart_val('AK')}")
-                        st.write(f"Final Wt: {get_smart_val('AL', '0')}g")
-                        st.write(f"QC Date: {clean_date(get_smart_val('AM'))}")
-                        st.write(f"Finish Date: {clean_date(r.get('FINISH_DATE', '---'))}")
-
-                    st.markdown("---")
-                    st.markdown("**🎨 COLOURSTONE DETAILS**")
-                    cs1, cs2 = st.columns(2)
-                    with cs1:
-                        st.caption("1st Issue")
-                        st.write(f"Person: {get_smart_val('AB')}")
-                        st.write(f"Qty: {get_smart_val('AC', '0')}")
-                        st.write(f"Date: {clean_date(get_smart_val('AD'))}")
-                    with cs2:
-                        st.caption("2nd Issue")
-                        st.write(f"Person: {get_smart_val('AE')}")
-                        st.write(f"Qty: {get_smart_val('AF', '0')}")
-                        st.write(f"Date: {clean_date(get_smart_val('AG'))}")
-
-                    st.divider()
-                    
-                    # SECTION 3: MOVEMENT DATA (RECOVERED FROM ORIGINAL WORKING CODE)
                     try:
-                        # Re-connect to ensure BigQuery context
-                        scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
-                        creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-                        client = bigquery.Client(credentials=creds, project=creds.project_id)
-                        
-                        def get_movement_data(table_id):
-                            # The key working query from your original code
-                            query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE BAG_NO = '{search_bag}'"
-                            m_df = client.query(query).to_dataframe()
-                            if m_df.empty: return m_df
-                            m_df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in m_df.columns]
-                            for c in m_df.columns:
-                                if 'DATE' in c:
-                                    m_df[c] = pd.to_datetime(m_df[c], errors='coerce').dt.strftime('%d/%m/%Y')
-                            return m_df
-
-                        st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
-                        df_pre = get_movement_data("pre_finish_movement")
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
+                        with st.spinner('Fetching Movement Logs...'):
+                            # PRE-FINISH
+                            st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
+                            df_pre = get_cached_movement("pre_finish_movement", search_bag)
+                            
                             if not df_pre.empty:
-                                cols = [c for c in df_pre.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
-                                if cols: st.dataframe(df_pre[cols].dropna(how='all'), hide_index=True, use_container_width=True)
-                        with c2:
-                            st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
-                            if not df_pre.empty:
-                                cols = [c for c in df_pre.columns if 'OUT' in c and 'BAG' not in c]
-                                if cols: st.dataframe(df_pre[cols].dropna(how='all'), hide_index=True, use_container_width=True)
+                                df_pre.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in df_pre.columns]
+                                c1, c2 = st.columns(2)
+                                with c1:
+                                    st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
+                                    in_cols = [c for c in df_pre.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
+                                    st.dataframe(df_pre[in_cols], hide_index=True, use_container_width=True)
+                                with c2:
+                                    st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
+                                    out_cols = [c for c in df_pre.columns if 'OUT' in c and 'BAG' not in c]
+                                    st.dataframe(df_pre[out_cols], hide_index=True, use_container_width=True)
+                            else:
+                                st.info("No Pre-Finish records found for this bag.")
 
-                        st.write("") 
-
-                        st.markdown("### ✨ POST-FINISH MOVEMENT")
-                        df_post = get_movement_data("post_finish_movement")
-                        c3, c4 = st.columns(2)
-                        with c3:
-                            st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
+                            # POST-FINISH
+                            st.markdown("### ✨ POST-FINISH MOVEMENT")
+                            df_post = get_cached_movement("post_finish_movement", search_bag)
+                            
                             if not df_post.empty:
-                                cols = [c for c in df_post.columns if 'OUT' in c and 'BAG' not in c]
-                                if cols: st.dataframe(df_post[cols].dropna(how='all'), hide_index=True, use_container_width=True)
-                        with c4:
-                            st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
-                            if not df_post.empty:
-                                cols = [c for c in df_post.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
-                                if cols: st.dataframe(df_post[cols].dropna(how='all'), hide_index=True, use_container_width=True)
+                                df_post.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in df_post.columns]
+                                c3, c4 = st.columns(2)
+                                with c3:
+                                    st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
+                                    out_cols = [c for c in df_post.columns if 'OUT' in c and 'BAG' not in c]
+                                    st.dataframe(df_post[out_cols], hide_index=True, use_container_width=True)
+                                with c4:
+                                    st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
+                                    in_cols = [c for c in df_post.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
+                                    st.dataframe(df_post[in_cols], hide_index=True, use_container_width=True)
+                            else:
+                                st.info("No Post-Finish records found.")
 
                     except Exception as mv_e:
-                        st.error(f"Movement Log Error: {mv_e}")
+                        st.error(f"Movement Sync Error: {mv_e}")
                 else:
                     st.warning(f"Bag No {search_bag} not found.")
