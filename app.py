@@ -307,20 +307,33 @@ else:
 
                     st.divider()
                     
-                    # SECTION 3: MOVEMENT DATA (RE-OPTIMIZED)
+                    # SECTION 3: MOVEMENT DATA (RE-OPTIMIZED FOR MATCHING)
                     try:
                         def get_movement_data(table_id, bag_no):
-                            # CAST ensures we match string inputs with numeric DB columns or vice versa
-                            query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE CAST(BAG_NO AS STRING) = '{bag_no}'"
+                            # Clean the input bag number
+                            clean_bag = str(bag_no).strip().upper()
+                            
+                            # SQL Query: We force both the Column and the Input to be TRIMMED STRINGS
+                            query = f"""
+                                SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` 
+                                WHERE TRIM(CAST(BAG_NO AS STRING)) = '{clean_bag}'
+                            """
                             try:
                                 m_df = client.query(query).to_dataframe()
-                                if m_df.empty: return pd.DataFrame()
+                                if m_df.empty: 
+                                    return pd.DataFrame()
+                                
+                                # Standardize headers
                                 m_df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in m_df.columns]
+                                
+                                # Format date columns
                                 for c in m_df.columns:
                                     if 'DATE' in c:
                                         m_df[c] = pd.to_datetime(m_df[c], errors='coerce').dt.strftime('%d-%b-%Y')
                                 return m_df
-                            except:
+                            except Exception as e:
+                                # This helps us see if the table name itself is wrong
+                                st.error(f"Error querying {table_id}: {e}")
                                 return pd.DataFrame()
 
                         # --- PRE-FINISH MOVEMENT ---
@@ -338,7 +351,7 @@ else:
                                 out_cols = [c for c in df_pre.columns if 'OUT' in c and 'BAG' not in c]
                                 if out_cols: st.dataframe(df_pre[out_cols].dropna(how='all'), hide_index=True, use_container_width=True)
                         else:
-                            st.info("No Pre-Finish records found.")
+                            st.info(f"No Pre-Finish records found for Bag: {search_bag}")
 
                         st.write("") 
 
@@ -357,9 +370,7 @@ else:
                                 in_cols_post = [c for c in df_post.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
                                 if in_cols_post: st.dataframe(df_post[in_cols_post].dropna(how='all'), hide_index=True, use_container_width=True)
                         else:
-                            st.info("No Post-Finish records found.")
+                            st.info(f"No Post-Finish records found for Bag: {search_bag}")
 
                     except Exception as mv_e:
-                        st.error(f"Movement Log Error: {mv_e}")
-                else:
-                    st.warning(f"Bag No {search_bag} not found in Master Inventory.")
+                        st.error(f"Movement Log System Error: {mv_e}")
