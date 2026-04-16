@@ -224,19 +224,18 @@ else:
             display_section("Metal Pending Customer Orders", df[~issued_mask & is_cust])
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
-                # --- REPORT 3: BAG HISTORY (MERGED STABLE VERSION) ---
+                # --- REPORT 3: BAG HISTORY (RESTORED FROM ORIGINAL CONTEXT) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
             
             if search_bag:
-                # Search in Master Inventory
                 match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
                 
                 if not match.empty:
                     r = match.iloc[0]
                     
-                    # --- SECTION 1: MASTER DETAILS ---
+                    # SECTION 1: MASTER DETAILS
                     st.markdown("### 📦 Bag Master Details")
                     mc1, mc2 = st.columns(2)
                     with mc1:
@@ -255,18 +254,20 @@ else:
 
                     st.divider()
 
-                    # --- SECTION 2: QC PROCESS & COLOURSTONES (THE MIDDLE PART) ---
+                    # SECTION 2: QC PROCESS REPORT (SMART MAPPING)
                     st.markdown("### 📋 QC Process Report")
                     
                     def find_col(letter):
                         potential_names = [letter, f"_{letter}_", f"COLUMN_{letter}", letter.upper()]
                         for name in potential_names:
-                            if name in match.columns: return name
+                            if name in match.columns:
+                                return name
                         return None
 
                     def get_smart_val(letter, default="---"):
                         col = find_col(letter)
-                        if col and pd.notna(r[col]): return r[col]
+                        if col and pd.notna(r[col]):
+                            return r[col]
                         return default
 
                     q1, q2, q3 = st.columns(3)
@@ -275,16 +276,19 @@ else:
                         st.write(f"QC: {get_smart_val('X')}")
                         st.write(f"Weight: {get_smart_val('Y', '0')}g")
                         st.write(f"Date: {clean_date(r.get('GHAT_DATE', '---'))}")
+                    
                     with q2:
                         st.markdown("**💎 SETTING DETAILS**")
                         st.write(f"QC: {get_smart_val('AH')}")
                         st.write(f"Weight: {get_smart_val('AY', '0')}g")
                         st.write(f"Date: {clean_date(r.get('SETTING_DATE', '---'))}")
+
                     with q3:
                         st.markdown("**✨ FINAL FINISH**")
                         st.write(f"Final QC: {get_smart_val('AK')}")
                         st.write(f"Final Wt: {get_smart_val('AL', '0')}g")
                         st.write(f"QC Date: {clean_date(get_smart_val('AM'))}")
+                        st.write(f"Finish Date: {clean_date(r.get('FINISH_DATE', '---'))}")
 
                     st.markdown("---")
                     st.markdown("**🎨 COLOURSTONE DETAILS**")
@@ -301,17 +305,17 @@ else:
                         st.write(f"Date: {clean_date(get_smart_val('AG'))}")
 
                     st.divider()
-
-                    # --- SECTION 3: MOVEMENT DATA (STABLE LOGIC) ---
+                    
+                    # SECTION 3: MOVEMENT DATA (RECOVERED FROM ORIGINAL WORKING CODE)
                     try:
-                        # Re-establishing connection for movement tables
+                        # Re-connect to ensure BigQuery context
                         scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
                         creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
                         client = bigquery.Client(credentials=creds, project=creds.project_id)
                         
                         def get_movement_data(table_id):
-                            # Using CAST to string to ensure matching with user input
-                            query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE CAST(BAG_NO AS STRING) = '{search_bag}'"
+                            # The key working query from your original code
+                            query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE BAG_NO = '{search_bag}'"
                             m_df = client.query(query).to_dataframe()
                             if m_df.empty: return m_df
                             m_df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in m_df.columns]
@@ -351,6 +355,6 @@ else:
                                 if cols: st.dataframe(df_post[cols].dropna(how='all'), hide_index=True, use_container_width=True)
 
                     except Exception as mv_e:
-                        st.error(f"Movement Data Error: {mv_e}")
+                        st.error(f"Movement Log Error: {mv_e}")
                 else:
                     st.warning(f"Bag No {search_bag} not found.")
