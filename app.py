@@ -147,79 +147,64 @@ else:
         elif menu == "📋 Scope of Work":
             st.header("📋 Scope of Work")
             
-            # 1. PREPARE DATA
+            # 1. PREPARE MASKS
             # Issued: Date is present | Pending: Date is blank/NaN
             issued_mask = df[col_issue_dt].notna() & (df[col_issue_dt].astype(str).str.strip() != "")
+            is_cust = df[col_order_type].str.contains("CUSTOMER", case=False, na=False)
+            is_stock = df[col_order_type].str.contains("STOCK", case=False, na=False)
             
-            def get_formatted_summary(data):
+            # Helper for consistent table formatting
+            def get_report_table(data):
                 if data.empty:
-                    return pd.DataFrame(columns=['Customer Name', 'Ord Qty', 'Metal 18kt', 'Dia Cts'])
-                
+                    return None
                 grp = data.groupby(col_cust).agg({
                     col_bag: 'count',
                     col_metal: 'sum',
                     col_dia: 'sum'
                 }).reset_index()
-                
-                grp.columns = ['Customer Name', 'Ord Qty', 'Metal 18kt', 'Dia Cts']
-                grp['Metal 18kt'] = grp['Metal 18kt'].apply(std_round)
+                grp.columns = ['Customer', 'Qty', 'Metal 18 Kt', 'Dia Cts']
+                grp['Metal 18 Kt'] = grp['Metal 18 Kt'].apply(std_round)
                 grp['Dia Cts'] = grp['Dia Cts'].map('{:,.2f}'.format)
                 return grp
 
-            # 2. GRAND TOTAL SECTION
-            st.subheader("📊 Total Scope of Work")
+            def display_section(title, data):
+                st.markdown(f"### {title}")
+                table = get_report_table(data)
+                if table is not None:
+                    st.table(table)
+                    t_qty = data[col_bag].count()
+                    t_met = std_round(data[col_metal].sum())
+                    t_dia = data[col_dia].sum()
+                    st.markdown(f"**Total:** {t_qty} Bags | {t_met}g Metal | {t_dia:,.2f} Dia Cts")
+                else:
+                    st.info(f"No data available for {title}")
+                st.write("") # Spacer
+
+            # 2. GRAND TOTAL SUMMARY (Top Level)
             gt_bags = df[col_bag].count()
             gt_metal = std_round(df[col_metal].sum())
             gt_dia = df[col_dia].sum()
             
-            cols_gt = st.columns(3)
-            cols_gt[0].metric("Total Ord Qty", f"{gt_bags}")
-            cols_gt[1].metric("Total Metal 18kt", f"{gt_metal}g")
-            cols_gt[2].metric("Total Dia Cts", f"{gt_dia:,.2f}")
+            st.markdown(f"""<div style="background-color:#f0f2f6; padding:15px; border-radius:10px; border-left:5px solid #ff4b4b;">
+                <h3 style="margin:0;">Total Scope of Work</h3>
+                <p style="font-size:20px; margin:0;"><b>{gt_bags} Bags | {gt_metal}g 18kt | {gt_dia:,.2f} Dia Cts</b></p>
+                </div>""", unsafe_allow_html=True)
             st.divider()
 
-            # 3. CUSTOMER ORDERS
-            st.markdown("### 👤 Customer Orders")
-            cust_data = df[df[col_order_type].str.contains("CUSTOMER", case=False, na=False)]
-            if not cust_data.empty:
-                df_cust = get_formatted_summary(cust_data)
-                st.table(df_cust)
-                st.markdown(f"**Total Customer Orders:** {cust_data[col_bag].count()} Bags | {std_round(cust_data[col_metal].sum())}g Metal | {cust_data[col_dia].sum():,.2f} Dia")
-            else:
-                st.info("No Customer Orders found.")
+            # 3. THE FOUR SECTIONS
+            # Section A: Metal Issued Customer Orders
+            display_section("✅ Metal Issued Customer Orders", df[issued_mask & is_cust])
 
-            # 4. STOCK ORDERS
-            st.markdown("### 🏢 Stock Orders")
-            stock_data = df[df[col_order_type].str.contains("STOCK", case=False, na=False)]
-            if not stock_data.empty:
-                df_stock = get_formatted_summary(stock_data)
-                st.table(df_stock)
-                st.markdown(f"**Total Stock Orders:** {stock_data[col_bag].count()} Bags | {std_round(stock_data[col_metal].sum())}g Metal | {stock_data[col_dia].sum():,.2f} Dia")
-            else:
-                st.info("No Stock Orders found.")
-            
+            # Section B: Metal Pending Customer Orders
+            display_section("⏳ Metal Pending Customer Orders", df[~issued_mask & is_cust])
+
             st.divider()
 
-            # 5. METAL ISSUED
-            st.markdown("### ✅ Metal Issued")
-            issued_data = df[issued_mask]
-            if not issued_data.empty:
-                df_issued = get_formatted_summary(issued_data)
-                st.table(df_issued)
-                st.markdown(f"**Total Metal Issued:** {issued_data[col_bag].count()} Bags | {std_round(issued_data[col_metal].sum())}g Metal | {issued_data[col_dia].sum():,.2f} Dia")
-            else:
-                st.info("No Metal Issued records found.")
+            # Section C: Metal Issued Stock Orders
+            display_section("✅ Metal Issued Stock Orders", df[issued_mask & is_stock])
 
-            # 6. METAL PENDING
-            st.markdown("### ⏳ Metal Pending")
-            pending_data = df[~issued_mask]
-            if not pending_data.empty:
-                df_pending = get_formatted_summary(pending_data)
-                st.table(df_pending)
-                st.markdown(f"**Total Metal Pending:** {pending_data[col_bag].count()} Bags | {std_round(pending_data[col_metal].sum())}g Metal | {pending_data[col_dia].sum():,.2f} Dia")
-            else:
-                st.info("No Metal Pending records found.")
-        # --- REPORT 3: BAG HISTORY (UNCHANGED) ---
+            # Section D: Metal Pending Stock Orders
+            display_section("⏳ Metal Pending Stock Orders", df[~issued_mask & is_stock])        # --- REPORT 3: BAG HISTORY (UNCHANGED) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
