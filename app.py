@@ -152,29 +152,47 @@ else:
             is_cust = df[col_order_type].str.contains("CUSTOMER", case=False, na=False)
             is_stock = df[col_order_type].str.contains("STOCK", case=False, na=False)
             
-            # Helper for consistent table formatting
+            # Helper for consistent table formatting with a TOTAL row
             def get_report_table(data):
                 if data.empty:
                     return None
+                
+                # Group data by Customer
                 grp = data.groupby(col_cust).agg({
                     col_bag: 'count',
                     col_metal: 'sum',
                     col_dia: 'sum'
                 }).reset_index()
                 grp.columns = ['Customer Name', 'Ord Qty', 'Metal 18kt', 'Dia Cts']
-                grp['Metal 18kt'] = grp['Metal 18kt'].apply(std_round)
-                grp['Dia Cts'] = grp['Dia Cts'].map('{:,.2f}'.format)
-                return grp
+                
+                # Calculate Totals for the bottom row
+                total_qty = grp['Ord Qty'].sum()
+                total_metal = grp['Metal 18kt'].sum()
+                total_dia = grp['Dia Cts'].sum()
+                
+                # Create the total row
+                total_row = pd.DataFrame([{
+                    'Customer Name': 'TOTAL',
+                    'Ord Qty': total_qty,
+                    'Metal 18kt': total_metal,
+                    'Dia Cts': total_dia
+                }])
+                
+                # Append total row to the dataframe
+                final_df = pd.concat([grp, total_row], ignore_index=True)
+                
+                # Final Formatting
+                final_df['Metal 18kt'] = final_df['Metal 18kt'].apply(std_round)
+                final_df['Dia Cts'] = final_df['Dia Cts'].map('{:,.2f}'.format)
+                
+                return final_df
 
             def display_section(title, data):
                 st.markdown(f"### {title}")
                 table = get_report_table(data)
                 if table is not None:
+                    # Styling the total row to stand out (Optional: using st.table)
                     st.table(table)
-                    t_qty = data[col_bag].count()
-                    t_met = std_round(data[col_metal].sum())
-                    t_dia = data[col_dia].sum()
-                    st.markdown(f"**Total {title}:** {t_qty} Bags | {t_met}g Metal | {t_dia:,.2f} Dia Cts")
                 else:
                     st.info(f"No data available for {title}")
                 st.divider()
@@ -185,7 +203,6 @@ else:
             gt_metal = std_round(df[col_metal].sum())
             gt_dia = df[col_dia].sum()
             
-            # Updated Styling for visibility (Dark box with white/bold text)
             st.markdown(f"""
                 <div style="background-color:#1E1E1E; padding:25px; border-radius:10px; border:2px solid #4F4F4F; text-align:center; color: white;">
                     <div style="font-size:16px; letter-spacing: 2px; color: #BBBBBB;">GRAND TOTAL</div>
@@ -200,9 +217,8 @@ else:
             display_section("Customer Orders", df[is_cust])
             display_section("Stock Orders", df[is_stock])
             
-            # --- 4. THE FOUR-WAY BREAKDOWN (NOW VERTICAL) ---
+            # --- 4. THE FOUR-WAY BREAKDOWN ---
             st.subheader("🔍 Detailed Breakdown (Issued vs Pending)")
-            st.write("Below tables show the status split for all orders:")
             
             display_section("Metal Issued Customer Orders", df[issued_mask & is_cust])
             display_section("Metal Pending Customer Orders", df[~issued_mask & is_cust])
