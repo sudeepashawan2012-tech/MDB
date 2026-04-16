@@ -70,7 +70,8 @@ else:
         df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
         df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
-        menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "🔍 Bag History Report"])
+        # UPDATED MENU WITH NEW REPORT
+        menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report"])
 
         # --- REPORT 1: METAL REQUIREMENTS (UNCHANGED) ---
         if menu == "📊 Metal Requirements":
@@ -142,7 +143,56 @@ else:
                         TOTAL: {t_cust_bags} Bags | {t_cust_metal}g 18kt | {t_cust_dia:,.2f} Dia Cts
                         </div>""", unsafe_allow_html=True)
 
-       # --- REPORT 3: BAG HISTORY (QC PROCESS ADDED) ---
+        # --- NEW REPORT: SCOPE OF WORK ---
+        elif menu == "📋 Scope of Work":
+            st.header("📋 Customer Scope of Work")
+            
+            # Identify which bags are issued based on date presence
+            issued_mask = df[col_issue_dt].notna() & (df[col_issue_dt].astype(str).str.strip() != "")
+            
+            def get_scope_summary(data):
+                if data.empty: return pd.DataFrame()
+                
+                # Split and Aggregate
+                issued_df = data[issued_mask]
+                pending_df = data[~issued_mask]
+                
+                iss_grp = issued_df.groupby(col_cust).agg({col_bag: 'count', col_metal: 'sum'}).rename(
+                    columns={col_bag: 'Issued Ord Qty', col_metal: 'Issued Metal'}
+                )
+                pen_grp = pending_df.groupby(col_cust).agg({col_bag: 'count', col_metal: 'sum'}).rename(
+                    columns={col_bag: 'Pending Ord Qty', col_metal: 'Pending Metal'}
+                )
+                
+                combined = pd.concat([iss_grp, pen_grp], axis=1).fillna(0)
+                combined['Total Ord Qty'] = combined['Issued Ord Qty'] + combined['Pending Ord Qty']
+                combined['Total Metal'] = combined['Issued Metal'] + combined['Pending Metal']
+                
+                # Format numbers
+                for c in ['Issued Metal', 'Pending Metal', 'Total Metal']:
+                    combined[c] = combined[c].apply(std_round)
+                for c in ['Issued Ord Qty', 'Pending Ord Qty', 'Total Ord Qty']:
+                    combined[c] = combined[c].astype(int)
+                    
+                return combined.reset_index().rename(columns={col_cust: 'Customer'})
+
+            st.subheader("📍 CUSTOMER ORDERS")
+            c_data = df[df[col_order_type].str.contains("CUSTOMER", case=False, na=False)]
+            if not c_data.empty:
+                st.dataframe(get_scope_summary(c_data), hide_index=True, use_container_width=True)
+            else:
+                st.info("No Customer Orders Found")
+
+            st.divider()
+
+            st.subheader("📍 STOCK ORDERS")
+            s_data = df[df[col_order_type].str.contains("STOCK", case=False, na=False)]
+            if not s_data.empty:
+                st.dataframe(get_scope_summary(s_data), hide_index=True, use_container_width=True)
+            else:
+                st.info("No Stock Orders Found")
+
+        # --- REPORT 3: BAG HISTORY (UNCHANGED) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
@@ -175,7 +225,6 @@ else:
                     # SECTION 2: QC PROCESS REPORT (SMART MAPPING)
                     st.markdown("### 📋 QC Process Report")
                     
-                    # This helper looks for the column letter even if it has underscores or spaces
                     def find_col(letter):
                         potential_names = [letter, f"_{letter}_", f"COLUMN_{letter}", letter.upper()]
                         for name in potential_names:
@@ -195,7 +244,6 @@ else:
                         st.markdown("**🛠️ GHAT DETAILS**")
                         st.write(f"QC: {get_smart_val('X')}")
                         st.write(f"Weight: {get_smart_val('Y', '0')}g")
-                        # Falling back to GHAT_DATE if it exists in your master df
                         st.write(f"Date: {clean_date(r.get('GHAT_DATE', '---'))}")
                     
                     with q2:
@@ -227,12 +275,8 @@ else:
 
                     st.divider()
                     
-                    # SECTION 3: MOVEMENT DATA (PRE & POST)
+                    # SECTION 3: MOVEMENT DATA
                     try:
-                        scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
-                        creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-                        client = bigquery.Client(credentials=creds, project=creds.project_id)
-                        
                         def get_movement_data(table_id):
                             query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE BAG_NO = '{search_bag}'"
                             m_df = client.query(query).to_dataframe()
