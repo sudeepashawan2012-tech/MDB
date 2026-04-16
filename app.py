@@ -336,41 +336,44 @@ else:
                                 st.error(f"Error querying {table_id}: {e}")
                                 return pd.DataFrame()
 
-                        # --- PRE-FINISH MOVEMENT ---
+                        # --- 1. PRE-FINISH MOVEMENT ---
                         st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
-                        df_pre = get_movement_data("pre_finish_movement", search_bag)
+                        df_pre = get_movement_data("pre_finish_movement")
                         
-                        if not df_pre.empty:
-                            c1, c2 = st.columns(2)
-                            with c1:
-                                st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold; border-left:4px solid #1a73e8;">Inward Details</p>', unsafe_allow_html=True)
-                                in_cols = [c for c in df_pre.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
-                                if in_cols: st.dataframe(df_pre[in_cols].dropna(how='all'), hide_index=True, use_container_width=True)
-                            with c2:
-                                st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold; border-left:4px solid #d93025;">Outward Details</p>', unsafe_allow_html=True)
-                                out_cols = [c for c in df_pre.columns if 'OUT' in c and 'BAG' not in c]
-                                if out_cols: st.dataframe(df_pre[out_cols].dropna(how='all'), hide_index=True, use_container_width=True)
-                        else:
-                            st.info(f"No Pre-Finish records found for Bag: {search_bag}")
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
+                            if not df_pre.empty:
+                                # Find columns that contain 'IN' but NOT 'OUT'
+                                cols = [c for c in df_pre.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
+                                st.dataframe(df_pre[cols].dropna(how='all'), hide_index=True, use_container_width=True)
+                        with c2:
+                            st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
+                            if not df_pre.empty:
+                                cols = [c for c in df_pre.columns if 'OUT' in c and 'BAG' not in c]
+                                st.dataframe(df_pre[cols].dropna(how='all'), hide_index=True, use_container_width=True)
 
                         st.write("") 
 
-                        # --- POST-FINISH MOVEMENT ---
+                        # --- 2. POST-FINISH MOVEMENT (SWAPPED SIDES) ---
                         st.markdown("### ✨ POST-FINISH MOVEMENT")
-                        df_post = get_movement_data("post_finish_movement", search_bag)
+                        df_post = get_movement_data("post_finish_movement")
                         
-                        if not df_post.empty:
-                            c3, c4 = st.columns(2)
-                            with c3:
-                                st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold; border-left:4px solid #d93025;">Outward Details</p>', unsafe_allow_html=True)
-                                out_cols_post = [c for c in df_post.columns if 'OUT' in c and 'BAG' not in c]
-                                if out_cols_post: st.dataframe(df_post[out_cols_post].dropna(how='all'), hide_index=True, use_container_width=True)
-                            with c4:
-                                st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold; border-left:4px solid #1a73e8;">Inward Details</p>', unsafe_allow_html=True)
-                                in_cols_post = [c for c in df_post.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
-                                if in_cols_post: st.dataframe(df_post[in_cols_post].dropna(how='all'), hide_index=True, use_container_width=True)
-                        else:
-                            st.info(f"No Post-Finish records found for Bag: {search_bag}")
+                        c3, c4 = st.columns(2)
+                        with c3:
+                            # OUTWARD ON LEFT
+                            st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
+                            if not df_post.empty:
+                                cols = [c for c in df_post.columns if 'OUT' in c and 'BAG' not in c]
+                                st.dataframe(df_post[cols].dropna(how='all'), hide_index=True, use_container_width=True)
+                        with c4:
+                            # INWARD ON RIGHT
+                            st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
+                            if not df_post.empty:
+                                cols = [c for c in df_post.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
+                                st.dataframe(df_post[cols].dropna(how='all'), hide_index=True, use_container_width=True)
 
                     except Exception as mv_e:
-                        st.error(f"Movement Log System Error: {mv_e}")
+                        st.error(f"Data Error: {mv_e}")
+                else:
+                    st.warning(f"Bag No {search_bag} not found.")
