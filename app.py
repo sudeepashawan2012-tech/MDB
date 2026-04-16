@@ -555,3 +555,84 @@ else:
                 else:
 
                     st.warning(f"Bag No {search_bag} not found.")
+                    # --- NEW REPORT: SCOPE OF WORK ---
+        elif menu == "📋 Scope of Work":
+            st.header("📋 Scope of Work")
+            
+            # 1. DATA PREPARATION
+            issued_mask = df[col_issue_dt].notna() & (df[col_issue_dt].astype(str).str.strip() != "")
+            is_cust = df[col_order_type].str.contains("CUSTOMER", case=False, na=False)
+            is_stock = df[col_order_type].str.contains("STOCK", case=False, na=False)
+            
+            # Helper for consistent table formatting with a TOTAL row
+            def get_report_table(data):
+                if data.empty:
+                    return None
+                
+                # Group data by Customer
+                grp = data.groupby(col_cust).agg({
+                    col_bag: 'count',
+                    col_metal: 'sum',
+                    col_dia: 'sum'
+                }).reset_index()
+                grp.columns = ['Customer Name', 'Ord Qty', 'Metal 18kt', 'Dia Cts']
+                
+                # Calculate Totals for the bottom row
+                total_qty = grp['Ord Qty'].sum()
+                total_metal = grp['Metal 18kt'].sum()
+                total_dia = grp['Dia Cts'].sum()
+                
+                # Create the total row
+                total_row = pd.DataFrame([{
+                    'Customer Name': 'TOTAL',
+                    'Ord Qty': total_qty,
+                    'Metal 18kt': total_metal,
+                    'Dia Cts': total_dia
+                }])
+                
+                # Append total row to the dataframe
+                final_df = pd.concat([grp, total_row], ignore_index=True)
+                
+                # Final Formatting
+                final_df['Metal 18kt'] = final_df['Metal 18kt'].apply(std_round)
+                final_df['Dia Cts'] = final_df['Dia Cts'].map('{:,.2f}'.format)
+                
+                return final_df
+
+            def display_section(title, data):
+                st.markdown(f"### {title}")
+                table = get_report_table(data)
+                if table is not None:
+                    # Styling the total row to stand out (Optional: using st.table)
+                    st.table(table)
+                else:
+                    st.info(f"No data available for {title}")
+                st.divider()
+
+            # --- 2. TOTAL SCOPE OF WORK (GRAND TOTAL) ---
+            st.subheader("📊 Total Scope of Work")
+            gt_bags = df[col_bag].count()
+            gt_metal = std_round(df[col_metal].sum())
+            gt_dia = df[col_dia].sum()
+            
+            st.markdown(f"""
+                <div style="background-color:#1E1E1E; padding:25px; border-radius:10px; border:2px solid #4F4F4F; text-align:center; color: white;">
+                    <div style="font-size:16px; letter-spacing: 2px; color: #BBBBBB;">GRAND TOTAL</div>
+                    <div style="font-size:28px; font-weight:bold; margin-top:10px;">
+                        {gt_bags} Ord Qty &nbsp; | &nbsp; {gt_metal} Metal 18kt &nbsp; | &nbsp; {gt_dia:,.2f} Dia Cts
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+            st.write("") 
+
+            # --- 3. THE TWO MAIN SUMMARIES ---
+            display_section("Customer Orders", df[is_cust])
+            display_section("Stock Orders", df[is_stock])
+            
+            # --- 4. THE FOUR-WAY BREAKDOWN ---
+            st.subheader("🔍 Detailed Breakdown (Issued vs Pending)")
+            
+            display_section("Metal Issued Customer Orders", df[issued_mask & is_cust])
+            display_section("Metal Pending Customer Orders", df[~issued_mask & is_cust])
+            display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
+            display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
