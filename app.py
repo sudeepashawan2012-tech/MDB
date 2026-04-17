@@ -170,7 +170,7 @@ else:
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
 
-       # --- REPORT 3: BAG HISTORY --- (Layout Swapped)
+       # --- REPORT 3: BAG HISTORY ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
@@ -181,7 +181,7 @@ else:
                 if not match.empty:
                     r = match.iloc[0]
                     
-                    # SWAPPED: Details on Left (2 parts), Image on Right (1 part)
+                    # SINGLE LAYOUT BLOCK
                     col_det, col_img = st.columns([2, 1])
                     
                     with col_det:
@@ -203,6 +203,7 @@ else:
                         st.markdown("### 🖼️ Design")
                         img_url = r.get('IMAGE_LINK')
                         if img_url and str(img_url).strip() not in ["", "---", "None"]:
+                            # ID extraction logic
                             if "id=" in str(img_url):
                                 file_id = str(img_url).split("id=")[1].split("&")[0]
                             elif "d/" in str(img_url):
@@ -211,14 +212,14 @@ else:
                                 file_id = None
                             
                             if file_id:
-                                # Reliable thumbnail link
                                 thumb_url = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
                                 st.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="100%" style="border-radius:10px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                                 st.caption("👆 Click to enlarge")
-                            else:
-                                st.warning("Format error.")
                         else:
                             st.info("No Image")
+
+                    st.divider()
+                    # --- STOP HERE: Ensure there is no other "Bag Master Details" code below this line ---
 
                     st.divider()
                     with col_det:
