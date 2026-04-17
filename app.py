@@ -1,3 +1,25 @@
+# --- ADD THIS FUNCTION AT THE TOP WITH YOUR OTHER FUNCTIONS ---
+def refresh_native_tables():
+    try:
+        # Commands to sync the native clustered tables with your source sheets
+        queries = [
+            """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.pre_finish_movement_native` 
+               CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement`""",
+            """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.post_finish_movement_native` 
+               CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement`"""
+        ]
+        for q in queries:
+            client.query(q).result() # .result() waits for it to finish
+        st.sidebar.success("Tables Refreshed!")
+        st.cache_data.clear() # Clear cache so the app sees the new data
+    except Exception as e:
+        st.sidebar.error(f"Refresh Failed: {e}")
+
+# --- ADD THE BUTTON IN YOUR SIDEBAR (Under the Menu) ---
+st.sidebar.divider()
+if st.sidebar.button("🔄 REFRESH MOVEMENT DATA"):
+    with st.sidebar.spinner("Syncing..."):
+        refresh_native_tables()
 import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
