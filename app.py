@@ -7,12 +7,24 @@ from datetime import datetime
 # 1. INITIAL SETUP & CLIENT DEFINITION
 st.set_page_config(page_title="WORKSHOP REPORTS", layout="wide")
 
-# We define the client globally so the refresh function can see it
 scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
 creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
 client = bigquery.Client(credentials=creds, project=creds.project_id)
 
 # 2. HELPER FUNCTIONS
+def get_drive_direct_link(url):
+    """Converts a standard Google Drive share link into a direct image source link"""
+    try:
+        if "id=" in str(url):
+            file_id = str(url).split("id=")[1].split("&")[0]
+        elif "d/" in str(url):
+            file_id = str(url).split("d/")[1].split("/")[0]
+        else:
+            return None
+        return f"https://drive.google.com/uc?export=view&id={file_id}"
+    except:
+        return None
+
 def refresh_native_tables():
     try:
         queries = [
@@ -63,11 +75,9 @@ if "password_correct" not in st.session_state:
             st.session_state["password_correct"] = True
             st.rerun()
 else:
-    # --- LOGGED IN CONTENT START ---
     df = fetch_data()
 
     if df is not None:
-        # Define Columns
         col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
         col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
         col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
@@ -79,16 +89,13 @@ else:
         df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
         df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
-        # Sidebar Menu
         menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report"])
 
-        # REFRESH BUTTON (Placed at the bottom of the sidebar)
         st.sidebar.divider()
         if st.sidebar.button("🔄 REFRESH MOVEMENT DATA"):
             with st.sidebar.spinner("Syncing..."):
                 refresh_native_tables()
 
-        # ... (Rest of your Report Logic: Metal Requirements, CSR, Scope of Work, etc.)
         # --- REPORT 1: METAL REQUIREMENTS ---
         if menu == "📊 Metal Requirements":
             st.header("📊 Metal Requirement Report")
@@ -127,7 +134,7 @@ else:
                     summary['Dia Cts'] = summary[col_dia].map('{:,.2f}'.format)
                     st.dataframe(summary[[col_status, col_bag, 'Metal 18kt', 'Dia Cts']].rename(columns={col_status: 'Status', col_bag: 'Bag Qty'}), hide_index=True, use_container_width=True)
 
-        # --- NEW REPORT: SCOPE OF WORK ---
+        # --- REPORT: SCOPE OF WORK ---
         elif menu == "📋 Scope of Work":
             st.header("📋 Scope of Work")
             issued_mask = df[col_issue_dt].notna() & (df[col_issue_dt].astype(str).str.strip() != "")
@@ -163,19 +170,28 @@ else:
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
 
-        # --- REPORT 3: BAG HISTORY (FULLY RESTORED & INTEGRATED) ---
+        # --- REPORT 3: BAG HISTORY ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
             
             if search_bag:
-                # Search in the Master DataFrame (already cached)
                 match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
                 
                 if not match.empty:
                     r = match.iloc[0]
                     
-                    # 1. MASTER DETAILS (From original context)
+                    # 1. BAG IMAGE SECTION (NEW BLOCK)
+                    img_url = r.get('IMAGE_LINK')
+                    if img_url and str(img_url).strip() not in ["", "---", "None"]:
+                        direct_img = get_drive_direct_link(img_url)
+                        if direct_img:
+                            st.markdown(f'<a href="{img_url}" target="_blank"><img src="{direct_img}" width="300"></a>', unsafe_allow_html=True)
+                            st.caption("👆 Click image to open full size")
+                        else:
+                            st.info("Invalid Image Link format.")
+                    
+                    # 2. MASTER DETAILS
                     st.markdown("### 📦 Bag Master Details")
                     mc1, mc2 = st.columns(2)
                     with mc1:
@@ -194,11 +210,10 @@ else:
 
                     st.divider()
 
-                    # 2. QC PROCESS REPORT (The "Middle Part" with Smart Mapping)
+                    # QC PROCESS REPORT
                     st.markdown("### 📋 QC Process Report")
                     
                     def find_col(letter):
-                        # Matches exact letter or letter with underscores (e.g., 'X' or '_X_')
                         potential_names = [letter, f"_{letter}_", f"COLUMN_{letter}", letter.upper()]
                         for name in potential_names:
                             if name in match.columns: return name
@@ -244,19 +259,12 @@ else:
 
                     st.divider()
 
-                    # 3. MOVEMENT DATA (The Stable, Working Version)
+                    # 3. MOVEMENT DATA
                     try:
-                        # Re-connect specifically for the Movement query
-                        scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
-                        creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-                        client = bigquery.Client(credentials=creds, project=creds.project_id)
-                        
                         def get_movement_data(table_id):
-                            # Working query: CAST is used to ensure match between string/int
                             query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE CAST(BAG_NO AS STRING) = '{search_bag}'"
                             m_df = client.query(query).to_dataframe()
                             if m_df.empty: return m_df
-                            
                             m_df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in m_df.columns]
                             for c in m_df.columns:
                                 if 'DATE' in c:
@@ -264,8 +272,7 @@ else:
                             return m_df
 
                         st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
-                        df_pre = get_movement_data("pre_finish_movement_native")  # Add _native
-                        
+                        df_pre = get_movement_data("pre_finish_movement_native")
                         c1, c2 = st.columns(2)
                         with c1:
                             st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
@@ -281,8 +288,7 @@ else:
                         st.write("") 
 
                         st.markdown("### ✨ POST-FINISH MOVEMENT")
-                        df_post = get_movement_data("post_finish_movement_native") # Add _native
-                        
+                        df_post = get_movement_data("post_finish_movement_native")
                         c3, c4 = st.columns(2)
                         with c3:
                             st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
@@ -294,7 +300,6 @@ else:
                             if not df_post.empty:
                                 in_cols_p = [c for c in df_post.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
                                 if in_cols_p: st.dataframe(df_post[in_cols_p].dropna(how='all'), hide_index=True, use_container_width=True)
-
                     except Exception as mv_e:
                         st.error(f"Movement Log Error: {mv_e}")
                 else:
