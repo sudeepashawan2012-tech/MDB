@@ -170,7 +170,7 @@ else:
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
 
-        # --- REPORT 3: BAG HISTORY ---
+       # --- REPORT 3: BAG HISTORY ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
@@ -181,35 +181,50 @@ else:
                 if not match.empty:
                     r = match.iloc[0]
                     
-                    # 1. BAG IMAGE SECTION (NEW BLOCK)
-                    img_url = r.get('IMAGE_LINK')
-                    if img_url and str(img_url).strip() not in ["", "---", "None"]:
-                        direct_img = get_drive_direct_link(img_url)
-                        if direct_img:
-                            st.markdown(f'<a href="{img_url}" target="_blank"><img src="{direct_img}" width="300"></a>', unsafe_allow_html=True)
-                            st.caption("👆 Click image to open full size")
-                        else:
-                            st.info("Invalid Image Link format.")
+                    # NEW LAYOUT: Image on Left (1 part), Details on Right (2 parts)
+                    col_img, col_det = st.columns([1, 2])
                     
-                    # 2. MASTER DETAILS
-                    st.markdown("### 📦 Bag Master Details")
-                    mc1, mc2 = st.columns(2)
-                    with mc1:
-                        st.write(f"**Customer:** {r.get(col_cust, 'N/A')}")
-                        st.write(f"**Order Type:** {r.get(col_order_type, 'N/A')}")
-                        st.write(f"**Karigar:** {r.get('KARIGAR', 'N/A')}")
-                        st.write(f"**Metal:** {std_round(r.get(col_metal, 0))}g 18kt")
-                        st.write(f"**Dia Cts:** {float(r.get(col_dia, 0)):.2f}")
-                    with mc2:
-                        st.write(f"**Order Date:** {clean_date(r.get('ORDER_DATE'))}")
-                        st.write(f"**Metal Issue:** {clean_date(r.get(col_issue_dt))}")
-                        dia_dt = r.get('DIA_ISSUE_DATE', r.get('DIAMOND_DATE', r.get('DIAMOND_ISSUE_DATE', '---')))
-                        st.write(f"**Dia Issue:** {clean_date(dia_dt)}") 
-                        st.write(f"**Delivery Date:** {clean_date(r.get('DELIVERY_DATE'))}")
-                        st.write(f"**Current Status:** {r.get(col_status, 'N/A')}")
+                    with col_img:
+                        st.markdown("### 🖼️ Design")
+                        img_url = r.get('IMAGE_LINK')
+                        if img_url and str(img_url).strip() not in ["", "---", "None"]:
+                            # Updated link logic for better visibility
+                            if "id=" in str(img_url):
+                                file_id = str(img_url).split("id=")[1].split("&")[0]
+                            elif "d/" in str(img_url):
+                                file_id = str(img_url).split("d/")[1].split("/")[0]
+                            else:
+                                file_id = None
+                            
+                            if file_id:
+                                # This is the most reliable "thumbnail" link for Google Drive
+                                thumb_url = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
+                                st.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="100%" style="border-radius:10px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
+                                st.caption("👆 Click to enlarge")
+                            else:
+                                st.warning("Image link format unrecognized.")
+                        else:
+                            st.info("No Image Available")
+
+                    with col_det:
+                        st.markdown("### 📦 Bag Master Details")
+                        # Smaller columns inside the details area to keep text tight
+                        sub1, sub2 = st.columns(2)
+                        with sub1:
+                            st.write(f"**Customer:** {r.get(col_cust, 'N/A')}")
+                            st.write(f"**Type:** {r.get(col_order_type, 'N/A')}")
+                            st.write(f"**Karigar:** {r.get('KARIGAR', 'N/A')}")
+                            st.write(f"**Metal:** {std_round(r.get(col_metal, 0))}g 18kt")
+                            st.write(f"**Dia:** {float(r.get(col_dia, 0)):.2f} Cts")
+                        with sub2:
+                            st.write(f"**Ordered:** {clean_date(r.get('ORDER_DATE'))}")
+                            st.write(f"**Metal Iss:** {clean_date(r.get(col_issue_dt))}")
+                            st.write(f"**Deliv Dt:** {clean_date(r.get('DELIVERY_DATE'))}")
+                            st.write(f"**Status:** {r.get(col_status, 'N/A')}")
 
                     st.divider()
 
+                    # ... (Continue with the rest of your QC Process Report and Movement Data below) ...
                     # QC PROCESS REPORT
                     st.markdown("### 📋 QC Process Report")
                     
