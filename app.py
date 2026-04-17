@@ -221,25 +221,7 @@ else:
                     st.divider()
                     # --- STOP HERE: Ensure there is no other "Bag Master Details" code below this line ---
 
-                    st.divider()
-                    with col_det:
-                        st.markdown("### 📦 Bag Master Details")
-                        # Smaller columns inside the details area to keep text tight
-                        sub1, sub2 = st.columns(2)
-                        with sub1:
-                            st.write(f"**Customer:** {r.get(col_cust, 'N/A')}")
-                            st.write(f"**Type:** {r.get(col_order_type, 'N/A')}")
-                            st.write(f"**Karigar:** {r.get('KARIGAR', 'N/A')}")
-                            st.write(f"**Metal:** {std_round(r.get(col_metal, 0))}g 18kt")
-                            st.write(f"**Dia:** {float(r.get(col_dia, 0)):.2f} Cts")
-                        with sub2:
-                            st.write(f"**Ordered:** {clean_date(r.get('ORDER_DATE'))}")
-                            st.write(f"**Metal Iss:** {clean_date(r.get(col_issue_dt))}")
-                            st.write(f"**Deliv Dt:** {clean_date(r.get('DELIVERY_DATE'))}")
-                            st.write(f"**Status:** {r.get(col_status, 'N/A')}")
-
-                    st.divider()
-
+                    
                     # ... (Continue with the rest of your QC Process Report and Movement Data below) ...
                     # QC PROCESS REPORT
                     st.markdown("### 📋 QC Process Report")
