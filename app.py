@@ -243,7 +243,7 @@ else:
                             return m_df
 
                         st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
-                        df_pre = get_movement_data("pre_finish_movement")
+                        df_pre = get_movement_data("pre_finish_movement_native")  # Add _native
                         
                         c1, c2 = st.columns(2)
                         with c1:
@@ -260,7 +260,7 @@ else:
                         st.write("") 
 
                         st.markdown("### ✨ POST-FINISH MOVEMENT")
-                        df_post = get_movement_data("post_finish_movement")
+                        df_post = get_movement_data("post_finish_movement_native") # Add _native
                         
                         c3, c4 = st.columns(2)
                         with c3:
