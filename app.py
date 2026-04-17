@@ -1,7 +1,20 @@
-# --- ADD THIS FUNCTION AT THE TOP WITH YOUR OTHER FUNCTIONS ---
+import streamlit as st
+import pandas as pd
+from google.cloud import bigquery
+from google.oauth2 import service_account
+from datetime import datetime
+
+# 1. INITIAL SETUP & CLIENT DEFINITION
+st.set_page_config(page_title="WORKSHOP REPORTS", layout="wide")
+
+# We define the client globally so the refresh function can see it
+scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
+creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+client = bigquery.Client(credentials=creds, project=creds.project_id)
+
+# 2. HELPER FUNCTIONS
 def refresh_native_tables():
     try:
-        # Commands to sync the native clustered tables with your source sheets
         queries = [
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.pre_finish_movement_native` 
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement`""",
@@ -9,43 +22,22 @@ def refresh_native_tables():
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement`"""
         ]
         for q in queries:
-            client.query(q).result() # .result() waits for it to finish
+            client.query(q).result()
         st.sidebar.success("Tables Refreshed!")
-        st.cache_data.clear() # Clear cache so the app sees the new data
+        st.cache_data.clear() 
     except Exception as e:
         st.sidebar.error(f"Refresh Failed: {e}")
-
-# --- ADD THE BUTTON IN YOUR SIDEBAR (Under the Menu) ---
-st.sidebar.divider()
-if st.sidebar.button("🔄 REFRESH MOVEMENT DATA"):
-    with st.sidebar.spinner("Syncing..."):
-        refresh_native_tables()
-import streamlit as st
-import pandas as pd
-from google.cloud import bigquery
-from google.oauth2 import service_account
-from datetime import datetime
-
-# 1. SETUP
-st.set_page_config(page_title="WORKSHOP REPORTS", layout="wide")
 
 @st.cache_data(ttl=300)
 def fetch_data():
     try:
-        scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
-        creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-        client = bigquery.Client(credentials=creds, project=creds.project_id)
-        
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
         df = client.query(query).to_dataframe()
-        
         df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
-        
         col_cust_check = next((c for c in df.columns if 'CUSTOMER' in c), None)
         if col_cust_check:
             df = df.dropna(subset=[col_cust_check])
             df = df[df[col_cust_check].astype(str).str.strip() != ""]
-            
         return df
     except Exception as e:
         st.error(f"Connection Error: {e}")
@@ -58,13 +50,11 @@ def std_round(x):
 def clean_date(dt):
     try:
         if pd.isna(dt) or str(dt).strip() == "" or str(dt) == "None": return "---"
-        if isinstance(dt, str):
-            dt = pd.to_datetime(dt)
+        if isinstance(dt, str): dt = pd.to_datetime(dt)
         return dt.strftime('%d-%b-%Y')
-    except:
-        return str(dt)
+    except: return str(dt)
 
-# 2. RUN APP
+# 3. RUN APP (Login Logic)
 if "password_correct" not in st.session_state:
     st.title("🔒 Login")
     pwd = st.text_input("Password", type="password")
@@ -73,9 +63,11 @@ if "password_correct" not in st.session_state:
             st.session_state["password_correct"] = True
             st.rerun()
 else:
+    # --- LOGGED IN CONTENT START ---
     df = fetch_data()
 
     if df is not None:
+        # Define Columns
         col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
         col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
         col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
@@ -87,9 +79,16 @@ else:
         df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
         df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
-        # UPDATED SIDEBAR MENU
+        # Sidebar Menu
         menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report"])
 
+        # REFRESH BUTTON (Placed at the bottom of the sidebar)
+        st.sidebar.divider()
+        if st.sidebar.button("🔄 REFRESH MOVEMENT DATA"):
+            with st.sidebar.spinner("Syncing..."):
+                refresh_native_tables()
+
+        # ... (Rest of your Report Logic: Metal Requirements, CSR, Scope of Work, etc.)
         # --- REPORT 1: METAL REQUIREMENTS ---
         if menu == "📊 Metal Requirements":
             st.header("📊 Metal Requirement Report")
