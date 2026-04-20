@@ -28,22 +28,35 @@ def get_drive_direct_link(url):
 def refresh_native_tables():
     try:
         queries = [
+            # 1. Refresh Master Inventory (Making it Native)
+            """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.master_inventory_native` 
+               AS SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`""",
+            
+            # 2. Refresh Sales Data (The one you just created!)
+            """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.SALE_DATA_native` 
+               AS SELECT * FROM `jewelry-sql-system.workshop_data.SALE_DATA`""",
+            
+            # 3. Refresh Pre-Finish Movement (Keeping the Clustering for speed)
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.pre_finish_movement_native` 
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement`""",
+            
+            # 4. Refresh Post-Finish Movement (Keeping the Clustering for speed)
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.post_finish_movement_native` 
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement`"""
         ]
+        
         for q in queries:
-            client.query(q).result()
-        st.sidebar.success("Tables Refreshed!")
-        st.cache_data.clear() 
+            client.query(q).result() # This runs the query and waits for it to finish
+            
+        st.sidebar.success("All Workshop Data Refreshed!")
+        st.cache_data.clear() # This clears the app's memory so it shows the new data
     except Exception as e:
         st.sidebar.error(f"Refresh Failed: {e}")
 
 @st.cache_data(ttl=300)
 def fetch_data():
     try:
-        query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`"
+        query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory_native`"
         df = client.query(query).to_dataframe()
         df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
         col_cust_check = next((c for c in df.columns if 'CUSTOMER' in c), None)
