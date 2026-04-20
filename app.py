@@ -56,7 +56,8 @@ def refresh_native_tables():
 @st.cache_data(ttl=300)
 def fetch_data():
     try:
-        query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory_native`"
+        query = """
+            SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory_native`"""
         df = client.query(query).to_dataframe()
         df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
         col_cust_check = next((c for c in df.columns if 'CUSTOMER' in c), None)
