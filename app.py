@@ -235,52 +235,62 @@ else:
                         else: st.info("No Image")
                     
                     st.divider()
-                    # --- 2. QC PROCESS REPORT (Strict Schema Mapping) ---
-                    st.markdown("### 📋 QC Process Report")
+                    # --- 2. QC PROCESS REPORT (Final Flexible Mapping) ---
+                    st.header("📋 QC Process Report")
                     
-                    # Helper to clean dates and timestamps
-                    def clean_qc_date(val):
-                        if pd.isna(val) or str(val).strip() in ["", "None", "nan", "---"]:
-                            return "---"
-                        try:
-                            # BigQuery TIMESTAMP/STRING handling
-                            dt = pd.to_datetime(val, errors='coerce')
-                            if pd.notnull(dt):
-                                return dt.strftime('%d/%m/%Y %I:%M %p')
-                            return str(val)
-                        except:
-                            return str(val)
+                    # 1. Flexible Column Finder Helper
+                    def get_val_flex(prefix):
+                        # This finds the first column that STARTS with your prefix (e.g., 'GHAT_QC')
+                        # to handle those extra underscores like 'GHAT_WT_____'
+                        col = next((c for c in match.columns if c.startswith(prefix)), None)
+                        if col:
+                            val = r[col]
+                            if pd.notna(val) and str(val).strip() not in ["", "None", "nan"]:
+                                return val
+                        return "---"
 
-                    # Helper to format weights
-                    def format_wt(val):
+                    # 2. Weight Formatter Helper
+                    def get_wt_flex(prefix):
+                        col = next((c for c in match.columns if c.startswith(prefix)), None)
+                        if col:
+                            val = r[col]
+                            try:
+                                v = float(val)
+                                return f"{v:.2f}" if v > 0 else "0.00"
+                            except:
+                                return "0.00"
+                        return "0.00"
+
+                    # 3. Date Formatter Helper
+                    def get_date_flex(prefix):
+                        val = get_val_flex(prefix)
+                        if val == "---": return "---"
                         try:
-                            v = float(val)
-                            return f"{v:.2f}" if v > 0 else "0.00"
+                            dt = pd.to_datetime(val, errors='coerce')
+                            return dt.strftime('%d/%m/%Y %I:%M %p') if pd.notnull(dt) else str(val)
                         except:
-                            return "0.00"
+                            return str(val)
 
                     q1, q2, q3 = st.columns(3)
                     
                     with q1:
                         st.markdown("**🛠️ GHAT DETAILS**")
-                        # Mapping to 'GHAT_QC', 'GHAT_WT', 'GHAT_DATE'
-                        st.write(f"**QC:** {r.get('GHAT_QC', '---')}")
-                        st.write(f"**Weight:** {format_wt(r.get('GHAT_WT', 0))}g")
-                        st.write(f"**Date:** {clean_qc_date(r.get('GHAT_DATE', '---'))}")
+                        # Uses prefix search to find 'GHAT_QC' and 'GHAT_WT'
+                        st.write(f"**QC:** {get_val_flex('GHAT_QC')}")
+                        st.write(f"**Weight:** {get_wt_flex('GHAT_WT')}g")
+                        st.write(f"**Date:** {get_date_flex('GHAT_DATE')}")
 
                     with q2:
                         st.markdown("**💎 SETTING DETAILS**")
-                        # Mapping to 'SETTING_QC', 'SETTING_WT', 'SETTING_DATE'
-                        st.write(f"**QC:** {r.get('SETTING_QC', '---')}")
-                        st.write(f"**Weight:** {format_wt(r.get('SETTING_WT', 0))}g")
-                        st.write(f"**Date:** {clean_qc_date(r.get('SETTING_DATE', '---'))}")
+                        st.write(f"**QC:** {get_val_flex('SETTING_QC')}")
+                        st.write(f"**Weight:** {get_wt_flex('SETTING_WT')}g")
+                        st.write(f"**Date:** {get_date_flex('SETTING_DATE')}")
 
                     with q3:
                         st.markdown("**✨ FINAL FINISH**")
-                        # Mapping to 'FINAL_QC', 'FINAL_WT', 'FINAL_QC_DATE'
-                        st.write(f"**Final QC:** {r.get('FINAL_QC', '---')}")
-                        st.write(f"**Final Wt:** {format_wt(r.get('FINAL_WT', 0))}g")
-                        st.write(f"**QC Date:** {clean_qc_date(r.get('FINAL_QC_DATE', '---'))}")
+                        st.write(f"**Final QC:** {get_val_flex('FINAL_QC')}")
+                        st.write(f"**Final Wt:** {get_wt_flex('FINAL_WT')}g")
+                        st.write(f"**QC Date:** {get_date_flex('FINAL_QC_DATE')}")
 
                     st.divider() 
                     # --- 3. MOVEMENT DATA LOGIC ---
