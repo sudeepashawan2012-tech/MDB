@@ -353,8 +353,8 @@ else:
                 else:
                     st.warning(f"Bag No {search_bag} not found.")
 
-       # --- REPORT 4: SALES REPORT (Interactive Bar Graphs - Dia Cts) ---
-        elif menu == "💰 Sales Report":
+       # --- REPORT 4: SALES Analytics (Interactive Bar Graphs - Dia Cts) ---
+        elif menu == "💰 Sales Analytics":
             st.header("💎 Sales Analytics")
             sdf = fetch_sales_data()
             
