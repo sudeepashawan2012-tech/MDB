@@ -196,7 +196,7 @@ else:
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
 
-       # --- REPORT 3: BAG HISTORY ---
+       # --- REPORT 3: BAG HISTORY (Updated for Column F and Search Fallback) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
@@ -205,60 +205,74 @@ else:
                 # 1. Search in Master Inventory
                 match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
                 
-                # 2. Search in Sale Data for "Sold" status override
+                # 2. Search in Sale Data (Column F = Index 5)
                 sdf = fetch_sales_data()
-                sale_match = pd.DataFrame()
+                sale_record = None
                 if sdf is not None:
-                    # Column 4 (Index 3) is usually Bag No in Sale Data, but we check based on your sheet structure
-                    # Assuming Bag No is also unique in Sale Data
-                    sale_match = sdf[sdf.iloc[:, 3].astype(str).str.upper() == search_bag.upper()]
+                    # UPDATED: Searching in Column F (Index 5)
+                    sale_match = sdf[sdf.iloc[:, 5].astype(str).str.upper() == search_bag.upper()]
+                    if not sale_match.empty:
+                        sale_record = sale_match.iloc[0]
 
-                if not match.empty:
-                    r = match.iloc[0]
+                # 3. Display Logic
+                if not match.empty or sale_record is not None:
+                    # If found in master, use that as base; otherwise use sale record
+                    r = match.iloc[0] if not match.empty else None
+                    is_sold = sale_record is not None
                     
-                    # Logic: If found in Sale Data, override status and delivery date
-                    is_sold = not sale_match.empty
-                    display_status = "SOLD" if is_sold else r.get(col_status, 'N/A')
-                    
-                    # Pull Delivery Date from Sale Data (Index 19 / Column T) if sold
-                    display_deliv = clean_date(sale_match.iloc[0, 19]) if is_sold else clean_date(r.get('DELIVERY_DATE'))
-                    
-                    # Pull Sold Customer from Sale Data (Index 0 / Column A) if sold
-                    display_cust = sale_match.iloc[0, 0] if is_sold else r.get(col_cust, 'N/A')
+                    # SOLD OVERRIDES (The red marked area in your image)
+                    display_status = "SOLD" if is_sold else (r.get(col_status, 'N/A') if r is not None else "OUT OF STOCK")
+                    display_cust = sale_record.iloc[0] if is_sold else (r.get(col_cust, 'N/A') if r is not None else "N/A")
+                    display_deliv = clean_date(sale_record.iloc[19]) if is_sold else (clean_date(r.get('DELIVERY_DATE')) if r is not None else "---")
 
                     col_det, col_img = st.columns([2, 1])
                     with col_det:
                         st.markdown("### 📦 Bag Master Details")
-                        # Add a "SOLD" badge if applicable
+                        
                         if is_sold:
-                            st.error("🚨 THIS ITEM IS SOLD")
+                            st.error("🚨 ITEM SOLD")
 
                         sub1, sub2 = st.columns(2)
                         with sub1:
                             st.write(f"**Customer:** {display_cust}")
-                            st.write(f"**Type:** {r.get(col_order_type, 'N/A')}")
-                            st.write(f"**Karigar:** {r.get('KARIGAR', 'N/A')}")
-                            st.write(f"**Metal:** {std_round(r.get(col_metal, 0))}g 18kt")
-                            st.write(f"**Dia:** {float(r.get(col_dia, 0)):.2f} Cts")
+                            st.write(f"**Type:** {r.get(col_order_type, 'N/A') if r is not None else 'N/A'}")
+                            st.write(f"**Karigar:** {r.get('KARIGAR', 'N/A') if r is not None else 'N/A'}")
+                            # Metal/Dia from Sale sheet if available, else Master sheet
+                            val_metal = sale_record.iloc[10] if is_sold else (r.get(col_metal, 0) if r is not None else 0)
+                            val_dia = sale_record.iloc[11] if is_sold else (r.get(col_dia, 0) if r is not None else 0)
+                            st.write(f"**Metal:** {std_round(val_metal)}g 18kt")
+                            st.write(f"**Dia:** {float(val_dia):.2f} Cts")
                         with sub2:
-                            st.write(f"**Ordered:** {clean_date(r.get('ORDER_DATE'))}")
-                            st.write(f"**Metal Iss:** {clean_date(r.get(col_issue_dt))}")
-                            st.write(f"**Deliv Dt:** {display_deliv}") # Shows Sale Date if Sold
-                            st.write(f"**Status:** {display_status}") # Shows 'SOLD' if in Sale Data
+                            st.write(f"**Ordered:** {clean_date(r.get('ORDER_DATE')) if r is not None else '---'}")
+                            st.write(f"**Metal Iss:** {clean_date(r.get(col_issue_dt)) if r is not None else '---'}")
+                            st.write(f"**Deliv Dt:** {display_deliv}") 
+                            st.write(f"**Status:** {display_status}")
+                            
+                            if is_sold:
+                                st.caption("✨ Sold Info from Sale Data")
+                                st.write(f"**Sales Bag No:** {sale_record.iloc[5]}") # Confirmation of Col F
 
                     with col_img:
                         st.markdown("### 🖼️ Design")
-                        img_url = r.get('IMAGE_LINK')
+                        img_url = r.get('IMAGE_LINK') if r is not None else None
                         if img_url and str(img_url).strip() not in ["", "---", "None"]:
+                            # ... (Keep ID extraction logic from your original code here) ...
                             if "id=" in str(img_url): file_id = str(img_url).split("id=")[1].split("&")[0]
                             elif "d/" in str(img_url): file_id = str(img_url).split("d/")[1].split("/")[0]
                             else: file_id = None
                             if file_id:
                                 thumb_url = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
                                 st.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="100%" style="border-radius:10px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
-                                st.caption("👆 Click to enlarge")
-                        else: st.info("No Image")
-                    # QC PROCESS AND MOVEMENT DATA CONTINUE BELOW WITHOUT CHANGES                    
+                        else:
+                            st.info("No Image Available")
+
+                    st.divider()
+                    # 4. Movement Data - only show if bag exists in Master/Movement tables
+                    if not match.empty:
+                        # ... (Keep your existing Movement Data try/except block here) ...
+                        pass 
+                else:
+                    st.warning(f"Bag No {search_bag} not found in Inventory or Sales.")                    # QC PROCESS AND MOVEMENT DATA CONTINUE BELOW WITHOUT CHANGES                    
                     st.divider()
                     st.markdown("### 📋 QC Process Report")
                     def find_col(letter):
