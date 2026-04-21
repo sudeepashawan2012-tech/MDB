@@ -235,9 +235,11 @@ else:
                         else: st.info("No Image")
                     
                     st.divider()
+                    # --- 2. QC PROCESS REPORT (Corrected Columns) ---
                     st.markdown("### 📋 QC Process Report")
                     
                     def find_col(letter):
+                        # BigQuery often appends underscores or 'COLUMN_' to single letter headers
                         potential_names = [letter, f"_{letter}_", f"COLUMN_{letter}", letter.upper()]
                         for name in potential_names:
                             if name in match.columns: return name
@@ -245,28 +247,38 @@ else:
                     
                     def get_smart_val(letter, default="---"):
                         col = find_col(letter)
-                        if col and pd.notna(r[col]): return r[col]
+                        if col and pd.notna(r[col]): 
+                            val = r[col]
+                            # If it's a numeric column (Weight), handle rounding/formatting
+                            if letter in ['Y', 'AI', 'AL']:
+                                try: return f"{float(val):.2f}"
+                                except: return val
+                            return val
                         return default
 
                     q1, q2, q3 = st.columns(3)
+                    
                     with q1:
                         st.markdown("**🛠️ GHAT DETAILS**")
-                        st.write(f"QC: {get_smart_val('X')}")
-                        st.write(f"Weight: {get_smart_val('Y', '0')}g")
-                        st.write(f"Date: {clean_date(r.get('GHAT_DATE', '---'))}")
+                        st.write(f"**QC:** {get_smart_val('X')}") # Column X
+                        st.write(f"**Weight:** {get_smart_val('Y')}g") # Column Y
+                        # Date using your existing GHAT_DATE logic but fallback to clean_date
+                        st.write(f"**Date:** {clean_date(r.get('GHAT_DATE', '---'))}")
+
                     with q2:
                         st.markdown("**💎 SETTING DETAILS**")
-                        st.write(f"QC: {get_smart_val('AH')}")
-                        st.write(f"Weight: {get_smart_val('AY', '0')}g")
-                        st.write(f"Date: {clean_date(r.get('SETTING_DATE', '---'))}")
+                        st.write(f"**QC:** {get_smart_val('AH')}") # Column AH
+                        st.write(f"**Weight:** {get_smart_val('AI')}g") # Column AI
+                        st.write(f"**Date:** {clean_date(r.get('SETTING_DATE', '---'))}")
+
                     with q3:
                         st.markdown("**✨ FINAL FINISH**")
-                        st.write(f"Final QC: {get_smart_val('AK')}")
-                        st.write(f"Final Wt: {get_smart_val('AL', '0')}g")
-                        st.write(f"QC Date: {clean_date(get_smart_val('AM'))}")
-                    
-                    st.divider()
+                        st.write(f"**Final QC:** {get_smart_val('AK')}") # Column AK
+                        st.write(f"**Final Wt:** {get_smart_val('AL')}g") # Column AL
+                        # QC Date from Column AN
+                        st.write(f"**QC Date:** {clean_date(get_smart_val('AN'))}") # Column AN
 
+                    st.divider()
                     # --- 3. MOVEMENT DATA LOGIC ---
                     try:
                         def get_movement_data(table_id):
