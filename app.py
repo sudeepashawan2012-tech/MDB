@@ -298,55 +298,63 @@ else:
                     except Exception as mv_e: st.error(f"Movement Log Error: {mv_e}")
                 else: st.warning(f"Bag No {search_bag} not found.")
 
-       # --- REPORT 4: SALES REPORT (Fixed Date Sorting & Filtering) ---
+       # --- REPORT 4: SALES REPORT (Strict Date & Data Cleaning) ---
         elif menu == "💰 Sales Report":
             st.header("💰 Month-wise Sales Report")
+            
+            # We clear cache here to ensure the "Deleted" records in Sheets are gone
             sdf = fetch_sales_data()
+            
             if sdf is not None:
                 try:
-                    # 1. Create the processing DataFrame
-                    # Column T is Index 19
-                    proc_df = pd.DataFrame({
-                        'Customer': sdf.iloc[:, 0], 
-                        'Metal': pd.to_numeric(sdf.iloc[:, 10], errors='coerce').fillna(0), 
-                        'Dia': pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0), 
-                        'Date': pd.to_datetime(sdf.iloc[:, 19], errors='coerce')
-                    })
-
-                    # 2. CRITICAL: Filter out invalid dates or specific ghost dates
-                    # This removes rows where the date couldn't be read or is empty
-                    proc_df = proc_df.dropna(subset=['Date'])
+                    # 1. Map columns (A=0, K=10, L=11, T=19)
+                    # We create a copy to avoid performance warnings
+                    s_report = pd.DataFrame()
+                    s_report['Customer'] = sdf.iloc[:, 0].astype(str).str.strip()
+                    s_report['Metal'] = pd.to_numeric(sdf.iloc[:, 10], errors='coerce').fillna(0)
+                    s_report['Dia'] = pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0)
                     
-                    # Optional: If you ONLY want 2026 data, uncomment the line below:
-                    # proc_df = proc_df[proc_df['Date'].dt.year >= 2026]
+                    # 2. Strict Date Parsing (DD/MM/YYYY)
+                    # dayfirst=True is critical for your format
+                    s_report['Date'] = pd.to_datetime(sdf.iloc[:, 19], dayfirst=True, errors='coerce')
 
-                    # 3. Create helper columns for display and sorting
-                    proc_df['Month_Year'] = proc_df['Date'].dt.strftime('%b-%y')
-                    proc_df['Sort_Key'] = proc_df['Date'].dt.to_period('M') # For chronological sorting
+                    # 3. CLEANING: Remove ghost rows
+                    # This removes rows where Customer is empty or Date is invalid
+                    s_report = s_report.dropna(subset=['Date'])
+                    s_report = s_report[s_report['Customer'] != "None"]
+                    s_report = s_report[s_report['Customer'] != "nan"]
+                    s_report = s_report[s_report['Customer'] != ""]
 
-                    # 4. Group by the helper Sort_Key so Jan comes before Feb
-                    sorted_months = proc_df.sort_values('Date')['Month_Year'].unique()
+                    if not s_report.empty:
+                        # 4. Formatting for Display
+                        s_report['Month_Year'] = s_report['Date'].dt.strftime('%b-%y')
+                        
+                        # Sort by date so report is in order
+                        unique_months = s_report.sort_values('Date')['Month_Year'].unique()
 
-                    for month in sorted_months:
-                        st.subheader(f"📅 {month}")
-                        m_data = proc_df[proc_df['Month_Year'] == month]
-                        
-                        summary = m_data.groupby('Customer').agg({'Metal': 'sum', 'Dia': 'sum'}).reset_index()
-                        
-                        # Add Totals
-                        total_row = pd.DataFrame([{
-                            'Customer': 'TOTAL', 
-                            'Metal': summary['Metal'].sum(), 
-                            'Dia': summary['Dia'].sum()
-                        }])
-                        
-                        final = pd.concat([summary, total_row], ignore_index=True)
-                        
-                        # Formatting
-                        final['Metal 18kt'] = final['Metal'].apply(std_round)
-                        final['Dia cts'] = final['Dia'].map('{:,.2f}'.format)
-                        
-                        st.table(final[['Customer', 'Metal 18kt', 'Dia cts']])
-                        
-                except Exception as e: 
+                        for month in unique_months:
+                            st.subheader(f"📅 {month}")
+                            m_data = s_report[s_report['Month_Year'] == month]
+                            
+                            # Group by Customer
+                            summary = m_data.groupby('Customer').agg({'Metal': 'sum', 'Dia': 'sum'}).reset_index()
+                            
+                            # Add TOTAL Row
+                            t_row = pd.DataFrame([{
+                                'Customer': 'TOTAL',
+                                'Metal': summary['Metal'].sum(),
+                                'Dia': summary['Dia'].sum()
+                            }])
+                            
+                            final = pd.concat([summary, t_row], ignore_index=True)
+                            
+                            # Final Table Prep
+                            final['Metal 18kt'] = final['Metal'].apply(std_round)
+                            final['Dia cts'] = final['Dia'].map('{:,.2f}'.format)
+                            
+                            st.table(final[['Customer', 'Metal 18kt', 'Dia cts']])
+                    else:
+                        st.info("No sales records found after date cleaning.")
+
+                except Exception as e:
                     st.error(f"Sales Report Error: {e}")
