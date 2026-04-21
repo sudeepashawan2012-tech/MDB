@@ -298,43 +298,55 @@ else:
                     except Exception as mv_e: st.error(f"Movement Log Error: {mv_e}")
                 else: st.warning(f"Bag No {search_bag} not found.")
 
-        # --- REPORT 4: SALES REPORT (Added Totals) ---
+       # --- REPORT 4: SALES REPORT (Fixed Date Sorting & Filtering) ---
         elif menu == "💰 Sales Report":
             st.header("💰 Month-wise Sales Report")
             sdf = fetch_sales_data()
             if sdf is not None:
                 try:
-                    s_cust = sdf.iloc[:, 0]
-                    s_metal = pd.to_numeric(sdf.iloc[:, 10], errors='coerce').fillna(0)
-                    s_dia = pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0)
-                    s_date = pd.to_datetime(sdf.iloc[:, 19], errors='coerce')
-
+                    # 1. Create the processing DataFrame
+                    # Column T is Index 19
                     proc_df = pd.DataFrame({
-                        'Customer': s_cust,
-                        'Metal': s_metal,
-                        'Dia': s_dia,
-                        'Date': s_date
-                    }).dropna(subset=['Date'])
+                        'Customer': sdf.iloc[:, 0], 
+                        'Metal': pd.to_numeric(sdf.iloc[:, 10], errors='coerce').fillna(0), 
+                        'Dia': pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0), 
+                        'Date': pd.to_datetime(sdf.iloc[:, 19], errors='coerce')
+                    })
 
+                    # 2. CRITICAL: Filter out invalid dates or specific ghost dates
+                    # This removes rows where the date couldn't be read or is empty
+                    proc_df = proc_df.dropna(subset=['Date'])
+                    
+                    # Optional: If you ONLY want 2026 data, uncomment the line below:
+                    # proc_df = proc_df[proc_df['Date'].dt.year >= 2026]
+
+                    # 3. Create helper columns for display and sorting
                     proc_df['Month_Year'] = proc_df['Date'].dt.strftime('%b-%y')
+                    proc_df['Sort_Key'] = proc_df['Date'].dt.to_period('M') # For chronological sorting
 
-                    unique_months = proc_df.sort_values('Date')['Month_Year'].unique()
-                    for month in unique_months:
+                    # 4. Group by the helper Sort_Key so Jan comes before Feb
+                    sorted_months = proc_df.sort_values('Date')['Month_Year'].unique()
+
+                    for month in sorted_months:
                         st.subheader(f"📅 {month}")
                         m_data = proc_df[proc_df['Month_Year'] == month]
+                        
                         summary = m_data.groupby('Customer').agg({'Metal': 'sum', 'Dia': 'sum'}).reset_index()
                         
-                        # Total Row for month
-                        month_total = pd.DataFrame([{
-                            'Customer': 'TOTAL',
-                            'Metal': summary['Metal'].sum(),
+                        # Add Totals
+                        total_row = pd.DataFrame([{
+                            'Customer': 'TOTAL', 
+                            'Metal': summary['Metal'].sum(), 
                             'Dia': summary['Dia'].sum()
                         }])
                         
-                        final_month_df = pd.concat([summary, month_total], ignore_index=True)
-                        final_month_df['Metal 18kt'] = final_month_df['Metal'].apply(std_round)
-                        final_month_df['Dia cts'] = final_month_df['Dia'].map('{:,.2f}'.format)
+                        final = pd.concat([summary, total_row], ignore_index=True)
                         
-                        st.table(final_month_df[['Customer', 'Metal 18kt', 'Dia cts']])
-                except Exception as e:
-                    st.error(f"Report Error: {e}. Check Column Count.")
+                        # Formatting
+                        final['Metal 18kt'] = final['Metal'].apply(std_round)
+                        final['Dia cts'] = final['Dia'].map('{:,.2f}'.format)
+                        
+                        st.table(final[['Customer', 'Metal 18kt', 'Dia cts']])
+                        
+                except Exception as e: 
+                    st.error(f"Sales Report Error: {e}")
