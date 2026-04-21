@@ -94,7 +94,6 @@ else:
     df = fetch_data()
 
     if df is not None:
-        # Mapping for existing reports
         col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
         col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
         col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
@@ -113,7 +112,7 @@ else:
             with st.sidebar.spinner("Syncing..."):
                 refresh_native_tables()
 
-        # --- REPORT 1: METAL REQUIREMENTS ---
+        # --- REPORT 1: METAL REQUIREMENTS (Existing) ---
         if menu == "📊 Metal Requirements":
             st.header("📊 Metal Requirement Report")
             exclude = ["HOLD", "CANCEL"]
@@ -137,7 +136,7 @@ else:
                 else:
                     st.info(f"No Metal Pending For {o_type.title()} Orders")
 
-        # --- REPORT 2: CSR ---
+        # --- REPORT 2: CSR (Added Totals) ---
         elif menu == "📋 CSR":
             st.header("📋 Customer Status Report")
             status_seq = {"SEQUENCE": 0, "ENGRAVING/HUID": 1, "IGI": 2, "ON HAND": 3, "FINAL QC": 4, "SETTING QC OK": 5, "SETTING": 6, "GHAT OK": 7, "CASTING": 8, "METAL ISSUED": 9, "METAL PENDING": 10, "HOLD": 12, "CANCEL": 13}
@@ -147,11 +146,22 @@ else:
                 with st.expander(f"👤 CUSTOMER: {cust}"):
                     cust_data = csr_df[csr_df[col_cust] == cust]
                     summary = cust_data.groupby([col_status, 'Seq']).agg({col_bag: 'count', col_metal: 'sum', col_dia: 'sum'}).reset_index().sort_values('Seq')
-                    summary['Metal 18kt'] = summary[col_metal].apply(std_round)
-                    summary['Dia Cts'] = summary[col_dia].map('{:,.2f}'.format)
-                    st.dataframe(summary[[col_status, col_bag, 'Metal 18kt', 'Dia Cts']].rename(columns={col_status: 'Status', col_bag: 'Bag Qty'}), hide_index=True, use_container_width=True)
+                    
+                    # Calculate Total Row
+                    total_row = pd.DataFrame([{
+                        col_status: 'TOTAL',
+                        col_bag: summary[col_bag].sum(),
+                        col_metal: summary[col_metal].sum(),
+                        col_dia: summary[col_dia].sum()
+                    }])
+                    
+                    final_summary = pd.concat([summary, total_row], ignore_index=True)
+                    final_summary['Metal 18kt'] = final_summary[col_metal].apply(std_round)
+                    final_summary['Dia Cts'] = final_summary[col_dia].map('{:,.2f}'.format)
+                    
+                    st.dataframe(final_summary[[col_status, col_bag, 'Metal 18kt', 'Dia Cts']].rename(columns={col_status: 'Status', col_bag: 'Bag Qty'}), hide_index=True, use_container_width=True)
 
-        # --- REPORT: SCOPE OF WORK ---
+        # --- REPORT: SCOPE OF WORK (Existing) ---
         elif menu == "📋 Scope of Work":
             st.header("📋 Scope of Work")
             issued_mask = df[col_issue_dt].notna() & (df[col_issue_dt].astype(str).str.strip() != "")
@@ -179,7 +189,6 @@ else:
             st.markdown(f"""<div style="background-color:#1E1E1E; padding:25px; border-radius:10px; border:2px solid #4F4F4F; text-align:center; color: white;">
                 <div style="font-size:28px; font-weight:bold;">{gt_bags} Ord Qty | {gt_metal} Metal 18kt | {gt_dia:,.2f} Dia Cts</div></div>""", unsafe_allow_html=True)
             st.write("") 
-
             display_section("Customer Orders", df[is_cust])
             display_section("Stock Orders", df[is_stock])
             display_section("Metal Issued Customer Orders", df[issued_mask & is_cust])
@@ -187,14 +196,12 @@ else:
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
 
-        # --- REPORT 3: BAG HISTORY ---
+        # --- REPORT 3: BAG HISTORY (Existing) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
-            
             if search_bag:
                 match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
-                
                 if not match.empty:
                     r = match.iloc[0]
                     col_det, col_img = st.columns([2, 1])
@@ -212,23 +219,18 @@ else:
                             st.write(f"**Metal Iss:** {clean_date(r.get(col_issue_dt))}")
                             st.write(f"**Deliv Dt:** {clean_date(r.get('DELIVERY_DATE'))}")
                             st.write(f"**Status:** {r.get(col_status, 'N/A')}")
-
                     with col_img:
                         st.markdown("### 🖼️ Design")
                         img_url = r.get('IMAGE_LINK')
                         if img_url and str(img_url).strip() not in ["", "---", "None"]:
-                            if "id=" in str(img_url):
-                                file_id = str(img_url).split("id=")[1].split("&")[0]
-                            elif "d/" in str(img_url):
-                                file_id = str(img_url).split("d/")[1].split("/")[0]
+                            if "id=" in str(img_url): file_id = str(img_url).split("id=")[1].split("&")[0]
+                            elif "d/" in str(img_url): file_id = str(img_url).split("d/")[1].split("/")[0]
                             else: file_id = None
-                            
                             if file_id:
                                 thumb_url = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
                                 st.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="100%" style="border-radius:10px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                                 st.caption("👆 Click to enlarge")
                         else: st.info("No Image")
-
                     st.divider()
                     st.markdown("### 📋 QC Process Report")
                     def find_col(letter):
@@ -240,7 +242,6 @@ else:
                         col = find_col(letter)
                         if col and pd.notna(r[col]): return r[col]
                         return default
-
                     q1, q2, q3 = st.columns(3)
                     with q1:
                         st.markdown("**🛠️ GHAT DETAILS**")
@@ -257,21 +258,6 @@ else:
                         st.write(f"Final QC: {get_smart_val('AK')}")
                         st.write(f"Final Wt: {get_smart_val('AL', '0')}g")
                         st.write(f"QC Date: {clean_date(get_smart_val('AM'))}")
-
-                    st.markdown("---")
-                    st.markdown("**🎨 COLOURSTONE DETAILS**")
-                    cs1, cs2 = st.columns(2)
-                    with cs1:
-                        st.caption("1st Issue")
-                        st.write(f"Person: {get_smart_val('AB')}")
-                        st.write(f"Qty: {get_smart_val('AC', '0')}")
-                        st.write(f"Date: {clean_date(get_smart_val('AD'))}")
-                    with cs2:
-                        st.caption("2nd Issue")
-                        st.write(f"Person: {get_smart_val('AE')}")
-                        st.write(f"Qty: {get_smart_val('AF', '0')}")
-                        st.write(f"Date: {clean_date(get_smart_val('AG'))}")
-
                     st.divider()
                     try:
                         def get_movement_data(table_id):
@@ -282,7 +268,6 @@ else:
                             for c in m_df.columns:
                                 if 'DATE' in c: m_df[c] = pd.to_datetime(m_df[c], errors='coerce').dt.strftime('%d/%m/%Y')
                             return m_df
-
                         st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
                         df_pre = get_movement_data("pre_finish_movement_native")
                         c1, c2 = st.columns(2)
@@ -296,7 +281,6 @@ else:
                             if not df_pre.empty:
                                 out_cols = [c for c in df_pre.columns if 'OUT' in c and 'BAG' not in c]
                                 if out_cols: st.dataframe(df_pre[out_cols].dropna(how='all'), hide_index=True, use_container_width=True)
-
                         st.write("") 
                         st.markdown("### ✨ POST-FINISH MOVEMENT")
                         df_post = get_movement_data("post_finish_movement_native")
@@ -314,19 +298,17 @@ else:
                     except Exception as mv_e: st.error(f"Movement Log Error: {mv_e}")
                 else: st.warning(f"Bag No {search_bag} not found.")
 
-        # --- NEW REPORT: SALES REPORT ---
+        # --- REPORT 4: SALES REPORT (Added Totals) ---
         elif menu == "💰 Sales Report":
             st.header("💰 Month-wise Sales Report")
             sdf = fetch_sales_data()
             if sdf is not None:
                 try:
-                    # Mapping by Index: A=0, K=10, L=11, T=19
                     s_cust = sdf.iloc[:, 0]
                     s_metal = pd.to_numeric(sdf.iloc[:, 10], errors='coerce').fillna(0)
                     s_dia = pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0)
                     s_date = pd.to_datetime(sdf.iloc[:, 19], errors='coerce')
 
-                    # Combine for processing
                     proc_df = pd.DataFrame({
                         'Customer': s_cust,
                         'Metal': s_metal,
@@ -335,17 +317,24 @@ else:
                     }).dropna(subset=['Date'])
 
                     proc_df['Month_Year'] = proc_df['Date'].dt.strftime('%b-%y')
-                    proc_df['Sort_Order'] = proc_df['Date'].dt.to_period('M')
 
-                    # Group and Display
                     unique_months = proc_df.sort_values('Date')['Month_Year'].unique()
                     for month in unique_months:
                         st.subheader(f"📅 {month}")
                         m_data = proc_df[proc_df['Month_Year'] == month]
                         summary = m_data.groupby('Customer').agg({'Metal': 'sum', 'Dia': 'sum'}).reset_index()
-                        summary['Metal'] = summary['Metal'].apply(std_round)
-                        summary['Dia'] = summary['Dia'].map('{:,.2f}'.format)
-                        summary.columns = ['Customer', 'Metal 18kt', 'Dia cts']
-                        st.table(summary)
+                        
+                        # Total Row for month
+                        month_total = pd.DataFrame([{
+                            'Customer': 'TOTAL',
+                            'Metal': summary['Metal'].sum(),
+                            'Dia': summary['Dia'].sum()
+                        }])
+                        
+                        final_month_df = pd.concat([summary, month_total], ignore_index=True)
+                        final_month_df['Metal 18kt'] = final_month_df['Metal'].apply(std_round)
+                        final_month_df['Dia cts'] = final_month_df['Dia'].map('{:,.2f}'.format)
+                        
+                        st.table(final_month_df[['Customer', 'Metal 18kt', 'Dia cts']])
                 except Exception as e:
-                    st.error(f"Report Error: {e}. Check if SALE_DATA has at least 20 columns.")
+                    st.error(f"Report Error: {e}. Check Column Count.")
