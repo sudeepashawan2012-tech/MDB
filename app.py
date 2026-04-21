@@ -298,84 +298,90 @@ else:
                     except Exception as mv_e: st.error(f"Movement Log Error: {mv_e}")
                 else: st.warning(f"Bag No {search_bag} not found.")
 
-       # --- REPORT 4: SALES REPORT (Interactive Line Graphs - Dia Cts) ---
+       # --- REPORT 4: SALES REPORT (Interactive Bar Graphs - Dia Cts) ---
         elif menu == "💰 Sales Report":
-            st.header("💰 Dia Cts Trend Analytics")
+            st.header("💎 Diamond Sales Analytics")
             sdf = fetch_sales_data()
             
             if sdf is not None:
-                # 1. Data Prep (A=Cust, F=Karigar, L=Dia Cts, T=Date)
-                s_report = pd.DataFrame({
-                    'Customer': sdf.iloc[:, 0].astype(str).str.strip(),
-                    'Karigar': sdf.iloc[:, 5].astype(str).str.strip(),
-                    'Dia Cts': pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0), # Column L (Index 11)
-                    'Date': pd.to_datetime(sdf.iloc[:, 19], dayfirst=True, errors='coerce')
-                })
-
-                # Clean Ghost Rows & filter for 2026
-                s_report = s_report.dropna(subset=['Date'])
-                s_report = s_report[s_report['Date'].dt.year == 2026]
-                s_report = s_report[~s_report['Customer'].isin(["None", "nan", ""])]
-
-                if not s_report.empty:
-                    # Prepare Months
-                    s_report['Month'] = s_report['Date'].dt.strftime('%B')
-                    month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+                try:
+                    import plotly.express as px
                     
-                    try:
-                        import plotly.express as px
+                    # 1. Data Prep (A=Cust, J=Karigar, L=Dia Cts, T=Date)
+                    s_report = pd.DataFrame({
+                        'Customer': sdf.iloc[:, 0].astype(str).str.strip(),
+                        'Karigar': sdf.iloc[:, 9].astype(str).str.strip(), # Column J (Index 9)
+                        'Dia_Cts': pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0), # Column L (Index 11)
+                        'Date': pd.to_datetime(sdf.iloc[:, 19], dayfirst=True, errors='coerce')
+                    })
+
+                    # Clean Ghost Rows & filter for 2026
+                    s_report = s_report.dropna(subset=['Date'])
+                    s_report = s_report[s_report['Date'].dt.year == 2026]
+                    s_report = s_report[~s_report['Customer'].isin(["None", "nan", ""])]
+
+                    if not s_report.empty:
+                        # Prepare Months for X-axis
+                        s_report['Month'] = s_report['Date'].dt.strftime('%B')
+                        month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
                         
-                        # Graph 1: Customers - Dia Cts Line Graph
-                        st.subheader("👥 Customer Dia Cts Trend (Line Graph)")
-                        cust_data = s_report.groupby(['Month', 'Customer'], observed=True)['Dia Cts'].sum().reset_index()
+                        # --- GRAPH 1: CUSTOMER DIA SALE (BAR) ---
+                        st.subheader("👥 Customer Diamond Sales (Month-wise)")
+                        cust_data = s_report.groupby(['Month', 'Customer'], observed=True)['Dia_Cts'].sum().reset_index()
                         
-                        fig_cust = px.line(
+                        fig_cust = px.bar(
                             cust_data, 
                             x="Month", 
-                            y="Dia Cts", 
+                            y="Dia_Cts", 
                             color="Customer",
-                            markers=True, # Add points on the lines
+                            barmode="group", # Side-by-side bars
+                            text_auto='.2f', # Show 2 decimal places on top of bars
                             category_orders={"Month": month_order},
                             template="plotly_dark",
-                            color_discrete_sequence=px.colors.qualitative.Pastel
+                            animation_frame=None # You can add "Month" here if you want a play button!
                         )
                         fig_cust.update_layout(yaxis_title="Diamond Cts", xaxis_title="")
                         st.plotly_chart(fig_cust, use_container_width=True)
 
                         st.divider()
 
-                        # Graph 2: Karigars - Dia Cts Line Graph
-                        st.subheader("⚒️ Karigar Dia Cts Production Trend (Line Graph)")
-                        kari_data = s_report.groupby(['Month', 'Karigar'], observed=True)['Dia Cts'].sum().reset_index()
+                        # --- GRAPH 2: KARIGAR DIA PRODUCTION (BAR) ---
+                        st.subheader("⚒️ Karigar Diamond Production (Month-wise)")
+                        karigar_data = s_report.groupby(['Month', 'Karigar'], observed=True)['Dia_Cts'].sum().reset_index()
                         
-                        fig_kari = px.line(
-                            kari_data, 
+                        fig_kari = px.bar(
+                            karigar_data, 
                             x="Month", 
-                            y="Dia Cts", 
+                            y="Dia_Cts", 
                             color="Karigar",
-                            markers=True,
+                            barmode="group",
+                            text_auto='.2f',
                             category_orders={"Month": month_order},
-                            template="plotly_dark",
-                            color_discrete_sequence=px.colors.qualitative.Safe
+                            template="plotly_dark"
                         )
                         fig_kari.update_layout(yaxis_title="Diamond Cts", xaxis_title="")
                         st.plotly_chart(fig_kari, use_container_width=True)
 
-                    except ImportError:
-                        # FALLBACK: Use standard Streamlit line charts if Plotly isn't ready
-                        st.warning("⚠️ Plotly module not installed yet. Showing standard line charts instead.")
-                        
-                        st.subheader("👥 Customer Dia Cts Trend")
-                        # Pivot data for standard line_chart
-                        c_chart = s_report.groupby(['Month', 'Customer'], observed=True)['Dia Cts'].sum().unstack().fillna(0)
-                        st.line_chart(c_chart)
-                        
-                        st.subheader("⚒️ Karigar Dia Cts Production Trend")
-                        k_chart = s_report.groupby(['Month', 'Karigar'], observed=True)['Dia Cts'].sum().unstack().fillna(0)
-                        st.line_chart(k_chart)
+                        st.divider()
 
-                    st.divider()
+                        # --- MONTHLY DETAIL TABLES ---
+                        st.subheader("📋 Monthly Detailed Breakdown")
+                        s_report['Month_Year'] = s_report['Date'].dt.strftime('%b-%y')
+                        unique_months = s_report.sort_values('Date', ascending=False)['Month_Year'].unique()
 
-                    # --- MONTHLY DETAIL TABLES (With Dia Cts added) ---
-                    st.subheader("📋 Monthly Detailed Breakdown")
-                    # (Rest of the monthly tables code goes here, but Dia Cts is already included in the initial data pull)
+                        for month in unique_months:
+                            with st.expander(f"📅 Details for {month}"):
+                                m_data = s_report[s_report['Month_Year'] == month]
+                                summary = m_data.groupby('Customer').agg({'Dia_Cts': 'sum'}).reset_index()
+                                # Add TOTAL Row
+                                t_row = pd.DataFrame([{'Customer': 'TOTAL', 'Dia_Cts': summary['Dia_Cts'].sum()}])
+                                final = pd.concat([summary, t_row], ignore_index=True)
+                                final['Dia cts'] = final['Dia_Cts'].map('{:,.2f}'.format)
+                                st.table(final[['Customer', 'Dia cts']])
+                    else:
+                        st.info("No sales records found for 2026.")
+
+                except ImportError:
+                    st.error("Missing 'plotly' module. Please add it to requirements.txt.")
+                except Exception as e:
+                    st.error(f"Analytics Error: {e}")
