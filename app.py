@@ -196,7 +196,7 @@ else:
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
 
-       # --- REPORT 3: BAG HISTORY (Updated with Sales Cross-Check) ---
+       # --- REPORT 3: BAG HISTORY ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
@@ -205,32 +205,33 @@ else:
                 # 1. Search in Master Inventory
                 match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
                 
-                # 2. Check Sale Data for Status Override
+                # 2. Search in Sale Data for "Sold" status override
                 sdf = fetch_sales_data()
-                sale_record = None
+                sale_match = pd.DataFrame()
                 if sdf is not None:
-                    # Looking for Bag No in Column D (Index 3) of Sale Data
+                    # Column 4 (Index 3) is usually Bag No in Sale Data, but we check based on your sheet structure
+                    # Assuming Bag No is also unique in Sale Data
                     sale_match = sdf[sdf.iloc[:, 3].astype(str).str.upper() == search_bag.upper()]
-                    if not sale_match.empty:
-                        sale_record = sale_match.iloc[0]
 
                 if not match.empty:
                     r = match.iloc[0]
                     
-                    # SOLD LOGIC OVERRIDE
-                    is_sold = sale_record is not None
-                    
-                    # If sold, pull Customer (Col A/Index 0) and Delivery Date (Col T/Index 19) from Sale Data
-                    display_cust = sale_record.iloc[0] if is_sold else r.get(col_cust, 'N/A')
+                    # Logic: If found in Sale Data, override status and delivery date
+                    is_sold = not sale_match.empty
                     display_status = "SOLD" if is_sold else r.get(col_status, 'N/A')
-                    display_deliv = clean_date(sale_record.iloc[19]) if is_sold else clean_date(r.get('DELIVERY_DATE'))
+                    
+                    # Pull Delivery Date from Sale Data (Index 19 / Column T) if sold
+                    display_deliv = clean_date(sale_match.iloc[0, 19]) if is_sold else clean_date(r.get('DELIVERY_DATE'))
+                    
+                    # Pull Sold Customer from Sale Data (Index 0 / Column A) if sold
+                    display_cust = sale_match.iloc[0, 0] if is_sold else r.get(col_cust, 'N/A')
 
                     col_det, col_img = st.columns([2, 1])
                     with col_det:
                         st.markdown("### 📦 Bag Master Details")
-                        
+                        # Add a "SOLD" badge if applicable
                         if is_sold:
-                            st.error("🚨 ITEM SOLD")
+                            st.error("🚨 THIS ITEM IS SOLD")
 
                         sub1, sub2 = st.columns(2)
                         with sub1:
@@ -242,14 +243,8 @@ else:
                         with sub2:
                             st.write(f"**Ordered:** {clean_date(r.get('ORDER_DATE'))}")
                             st.write(f"**Metal Iss:** {clean_date(r.get(col_issue_dt))}")
-                            st.write(f"**Deliv Dt:** {display_deliv}") 
-                            st.write(f"**Status:** {display_status}")
-                            
-                            # Additional details from Sale Data if sold (The red marked area)
-                            if is_sold:
-                                st.caption("✨ Sold Info from Sale Data")
-                                st.write(f"**Sold Wt:** {sale_record.iloc[10]}g") # Col K
-                                st.write(f"**Sold Dia:** {sale_record.iloc[11]} cts") # Col L
+                            st.write(f"**Deliv Dt:** {display_deliv}") # Shows Sale Date if Sold
+                            st.write(f"**Status:** {display_status}") # Shows 'SOLD' if in Sale Data
 
                     with col_img:
                         st.markdown("### 🖼️ Design")
@@ -263,7 +258,6 @@ else:
                                 st.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="100%" style="border-radius:10px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                                 st.caption("👆 Click to enlarge")
                         else: st.info("No Image")
-
                     # QC PROCESS AND MOVEMENT DATA CONTINUE BELOW WITHOUT CHANGES                    
                     st.divider()
                     st.markdown("### 📋 QC Process Report")
