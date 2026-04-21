@@ -298,52 +298,74 @@ else:
                     except Exception as mv_e: st.error(f"Movement Log Error: {mv_e}")
                 else: st.warning(f"Bag No {search_bag} not found.")
 
-       # --- REPORT 4: SALES REPORT (Tables + Monthly Trend Graphs) ---
+       # --- REPORT 4: SALES REPORT (Interactive Plotly Graphs) ---
         elif menu == "💰 Sales Report":
             st.header("💰 Sales Trend Analytics")
             sdf = fetch_sales_data()
             
             if sdf is not None:
                 try:
-                    # 1. Data Prep (A=Cust, F=Karigar, K=Metal, T=Date)
+                    import plotly.express as px # Ensure plotly is available
+
+                    # 1. Data Prep (A=Cust, J=Karigar, K=Metal, T=Date)
                     s_report = pd.DataFrame({
                         'Customer': sdf.iloc[:, 0].astype(str).str.strip(),
-                        'Karigar': sdf.iloc[:, 5].astype(str).str.strip(),
+                        'Karigar': sdf.iloc[:, 9].astype(str).str.strip(), # Column J (Index 9)
                         'Metal': pd.to_numeric(sdf.iloc[:, 10], errors='coerce').fillna(0),
                         'Date': pd.to_datetime(sdf.iloc[:, 19], dayfirst=True, errors='coerce')
                     })
 
-                    # Clean Ghost Rows & filter only for the current year (2026)
+                    # Clean Ghost Rows & filter for 2026
                     s_report = s_report.dropna(subset=['Date'])
                     s_report = s_report[s_report['Date'].dt.year == 2026]
                     s_report = s_report[~s_report['Customer'].isin(["None", "nan", ""])]
 
                     if not s_report.empty:
-                        # Create Month Name column for the X-axis
+                        # Prepare Months
                         s_report['Month'] = s_report['Date'].dt.strftime('%B')
-                        # Ensure chronological sorting (Jan, Feb, Mar...)
                         month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-                        s_report['Month'] = pd.Categorical(s_report['Month'], categories=month_order, ordered=True)
-
+                        
                         # --- GRAPH 1: CUSTOMER SALE MONTH-WISE ---
-                        st.subheader("👥 Customer Sales Trend (Month-wise)")
-                        # Pivoting data to show Month vs Customer
-                        cust_trend = s_report.groupby(['Month', 'Customer'], observed=True)['Metal'].sum().unstack().fillna(0)
-                        st.bar_chart(cust_trend)
-                        st.caption("Total Metal weight (18kt) sold per Customer across months.")
+                        st.subheader("👥 Customer Sales Trend")
+                        cust_data = s_report.groupby(['Month', 'Customer'], observed=True)['Metal'].sum().reset_index()
+                        
+                        fig_cust = px.bar(
+                            cust_data, 
+                            x="Month", 
+                            y="Metal", 
+                            color="Customer",
+                            barmode="group",
+                            text_auto='.0f',
+                            category_orders={"Month": month_order},
+                            template="plotly_dark",
+                            color_discrete_sequence=px.colors.qualitative.Pastel
+                        )
+                        fig_cust.update_layout(yaxis_title="Metal (18kt grams)", xaxis_title="")
+                        st.plotly_chart(fig_cust, use_container_width=True)
 
                         st.divider()
 
                         # --- GRAPH 2: KARIGAR SALE MONTH-WISE ---
-                        st.subheader("⚒️ Karigar Production Trend (Month-wise)")
-                        # Pivoting data to show Month vs Karigar
-                        karigar_trend = s_report.groupby(['Month', 'Karigar'], observed=True)['Metal'].sum().unstack().fillna(0)
-                        st.bar_chart(karigar_trend)
-                        st.caption("Total Metal weight (18kt) processed per Karigar across months.")
+                        st.subheader("⚒️ Karigar Production Trend")
+                        karigar_data = s_report.groupby(['Month', 'Karigar'], observed=True)['Metal'].sum().reset_index()
+                        
+                        fig_kari = px.bar(
+                            karigar_data, 
+                            x="Month", 
+                            y="Metal", 
+                            color="Karigar",
+                            barmode="group",
+                            text_auto='.0f',
+                            category_orders={"Month": month_order},
+                            template="plotly_dark",
+                            color_discrete_sequence=px.colors.qualitative.Safe
+                        )
+                        fig_kari.update_layout(yaxis_title="Metal (18kt grams)", xaxis_title="")
+                        st.plotly_chart(fig_kari, use_container_width=True)
 
                         st.divider()
 
-                        # --- MONTHLY DETAIL TABLES (Keeping your existing request) ---
+                        # --- MONTHLY DETAIL TABLES ---
                         st.subheader("📋 Monthly Detailed Breakdown")
                         s_report['Month_Year'] = s_report['Date'].dt.strftime('%b-%y')
                         unique_months = s_report.sort_values('Date', ascending=False)['Month_Year'].unique()
@@ -352,13 +374,12 @@ else:
                             with st.expander(f"📅 Details for {month}"):
                                 m_data = s_report[s_report['Month_Year'] == month]
                                 summary = m_data.groupby('Customer').agg({'Metal': 'sum'}).reset_index()
-                                # Add TOTAL Row
                                 t_row = pd.DataFrame([{'Customer': 'TOTAL', 'Metal': summary['Metal'].sum()}])
                                 final = pd.concat([summary, t_row], ignore_index=True)
                                 final['Metal 18kt'] = final['Metal'].apply(std_round)
                                 st.table(final[['Customer', 'Metal 18kt']])
                     else:
-                        st.info("No sales records found for the year 2026.")
+                        st.info("No sales records found for 2026.")
 
                 except Exception as e:
                     st.error(f"Analytics Error: {e}")
