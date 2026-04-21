@@ -196,10 +196,11 @@ else:
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
 
-        # --- REPORT 3: BAG HISTORY (Existing) ---
+# --- REPORT 3: BAG HISTORY ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
+            
             if search_bag:
                 match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
                 if not match.empty:
@@ -219,6 +220,7 @@ else:
                             st.write(f"**Metal Iss:** {clean_date(r.get(col_issue_dt))}")
                             st.write(f"**Deliv Dt:** {clean_date(r.get('DELIVERY_DATE'))}")
                             st.write(f"**Status:** {r.get(col_status, 'N/A')}")
+                    
                     with col_img:
                         st.markdown("### 🖼️ Design")
                         img_url = r.get('IMAGE_LINK')
@@ -231,17 +233,21 @@ else:
                                 st.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="100%" style="border-radius:10px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                                 st.caption("👆 Click to enlarge")
                         else: st.info("No Image")
+                    
                     st.divider()
                     st.markdown("### 📋 QC Process Report")
+                    
                     def find_col(letter):
                         potential_names = [letter, f"_{letter}_", f"COLUMN_{letter}", letter.upper()]
                         for name in potential_names:
                             if name in match.columns: return name
                         return None
+                    
                     def get_smart_val(letter, default="---"):
                         col = find_col(letter)
                         if col and pd.notna(r[col]): return r[col]
                         return default
+
                     q1, q2, q3 = st.columns(3)
                     with q1:
                         st.markdown("**🛠️ GHAT DETAILS**")
@@ -258,44 +264,68 @@ else:
                         st.write(f"Final QC: {get_smart_val('AK')}")
                         st.write(f"Final Wt: {get_smart_val('AL', '0')}g")
                         st.write(f"QC Date: {clean_date(get_smart_val('AM'))}")
+                    
                     st.divider()
-                    try:# --- UPDATE THIS FUNCTION INSIDE BAG HISTORY ---
-def get_movement_data(table_id):
-    query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE CAST(BAG_NO AS STRING) = '{search_bag}'"
-    m_df = client.query(query).to_dataframe()
-    
-    if m_df.empty: 
-        return m_df
-        
-    # 1. Standardize column names
-    m_df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in m_df.columns]
-    
-    # 2. Find the date and time columns (Inward or Outward)
-    date_col = next((c for c in m_df.columns if 'DATE' in c), None)
-    time_col = next((c for c in m_df.columns if 'TIME' in c), None)
 
-    # 3. CRITICAL: Convert to actual datetime objects for proper sorting
-    if date_col:
-        # We handle the DD/MM/YYYY format specifically
-        m_df['SORT_DATE'] = pd.to_datetime(m_df[date_col], dayfirst=True, errors='coerce')
-        
-        if time_col:
-            # We combine Date and Time to handle multiple movements on the same day
-            # This handles formats like "03:57 pm"
-            m_df['SORT_TIME'] = pd.to_datetime(m_df[time_col], format='%I:%M %p', errors='coerce').dt.time
-            
-            # Sort by Date then Time (Top to Bottom: Oldest at Top, Newest at Bottom)
-            m_df = m_df.sort_values(by=['SORT_DATE', 'SORT_TIME'], ascending=True)
-        else:
-            m_df = m_df.sort_values(by='SORT_DATE', ascending=True)
+                    # --- 3. MOVEMENT DATA LOGIC ---
+                    try:
+                        def get_movement_data(table_id):
+                            query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE CAST(BAG_NO AS STRING) = '{search_bag}'"
+                            m_df = client.query(query).to_dataframe()
+                            if m_df.empty: return m_df
+                            
+                            m_df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in m_df.columns]
+                            date_col = next((c for c in m_df.columns if 'DATE' in c), None)
+                            time_col = next((c for c in m_df.columns if 'TIME' in c), None)
 
-    # 4. Clean up the display format back to DD/MM/YYYY for the user
-    for c in m_df.columns:
-        if 'DATE' in c and c != 'SORT_DATE':
-            m_df[c] = pd.to_datetime(m_df[c], dayfirst=True, errors='coerce').dt.strftime('%d/%m/%Y')
-            
-    # Drop the helper columns we used for sorting so they don't show in the table
-    return m_df.drop(columns=['SORT_DATE', 'SORT_TIME'], errors='ignore')
+                            if date_col:
+                                m_df['SORT_DATE'] = pd.to_datetime(m_df[date_col], dayfirst=True, errors='coerce')
+                                if time_col:
+                                    m_df['SORT_TIME'] = pd.to_datetime(m_df[time_col], format='%I:%M %p', errors='coerce').dt.time
+                                    m_df = m_df.sort_values(by=['SORT_DATE', 'SORT_TIME'], ascending=True)
+                                else:
+                                    m_df = m_df.sort_values(by='SORT_DATE', ascending=True)
+
+                            for c in m_df.columns:
+                                if 'DATE' in c and c != 'SORT_DATE':
+                                    m_df[c] = pd.to_datetime(m_df[c], dayfirst=True, errors='coerce').dt.strftime('%d/%m/%Y')
+                            
+                            return m_df.drop(columns=['SORT_DATE', 'SORT_TIME'], errors='ignore')
+
+                        # DISPLAY MOVEMENT TABLES
+                        st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
+                        df_pre = get_movement_data("pre_finish_movement_native")
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
+                            if not df_pre.empty:
+                                in_cols = [c for c in df_pre.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
+                                if in_cols: st.dataframe(df_pre[in_cols].dropna(how='all'), hide_index=True, use_container_width=True)
+                        with c2:
+                            st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
+                            if not df_pre.empty:
+                                out_cols = [c for c in df_pre.columns if 'OUT' in c and 'BAG' not in c]
+                                if out_cols: st.dataframe(df_pre[out_cols].dropna(how='all'), hide_index=True, use_container_width=True)
+
+                        st.write("") 
+                        st.markdown("### ✨ POST-FINISH MOVEMENT")
+                        df_post = get_movement_data("post_finish_movement_native")
+                        c3, c4 = st.columns(2)
+                        with c3:
+                            st.markdown('<p style="background-color:#FEE8E8; padding:8px; border-radius:5px; color:black; font-weight:bold;">Outward</p>', unsafe_allow_html=True)
+                            if not df_post.empty:
+                                out_cols_p = [c for c in df_post.columns if 'OUT' in c and 'BAG' not in c]
+                                if out_cols_p: st.dataframe(df_post[out_cols_p].dropna(how='all'), hide_index=True, use_container_width=True)
+                        with c4:
+                            st.markdown('<p style="background-color:#E8F0FE; padding:8px; border-radius:5px; color:black; font-weight:bold;">Inward</p>', unsafe_allow_html=True)
+                            if not df_post.empty:
+                                in_cols_p = [c for c in df_post.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
+                                if in_cols_p: st.dataframe(df_post[in_cols_p].dropna(how='all'), hide_index=True, use_container_width=True)
+
+                    except Exception as mv_e:
+                        st.error(f"Movement Log Error: {mv_e}")
+                else:
+                    st.warning(f"Bag No {search_bag} not found.")
 
        # --- REPORT 4: SALES REPORT (Interactive Bar Graphs - Dia Cts) ---
         elif menu == "💰 Sales Report":
