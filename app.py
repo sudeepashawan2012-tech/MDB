@@ -235,58 +235,54 @@ else:
                         else: st.info("No Image")
                     
                     st.divider()
-                    # --- 2. QC PROCESS REPORT (Enhanced Column Mapping) ---
+                    # --- 2. QC PROCESS REPORT (Strict Schema Mapping) ---
                     st.markdown("### 📋 QC Process Report")
                     
-                    def get_smart_val(letter, default="---"):
-                        # We search for the letter, the letter with underscores, or 'COLUMN_' prefix
-                        target_cols = [letter, f"_{letter}_", f"COLUMN_{letter}", letter.upper()]
-                        col = next((c for c in target_cols if c in match.columns), None)
-                        
-                        if col is not None:
-                            val = r[col]
-                            if pd.notna(val) and str(val).strip() not in ["", "None", "nan"]:
-                                # If it's a weight column, format it
-                                if letter in ['Y', 'AI', 'AL']:
-                                    try: return f"{float(val):.2f}"
-                                    except: return val
-                                return val
-                        return default
-
-                    # Special date cleaner for QC dates that might have time attached
+                    # Helper to clean dates and timestamps
                     def clean_qc_date(val):
                         if pd.isna(val) or str(val).strip() in ["", "None", "nan", "---"]:
                             return "---"
                         try:
-                            # Try parsing DD/MM/YYYY with or without time
-                            dt = pd.to_datetime(val, dayfirst=True, errors='coerce')
+                            # BigQuery TIMESTAMP/STRING handling
+                            dt = pd.to_datetime(val, errors='coerce')
                             if pd.notnull(dt):
                                 return dt.strftime('%d/%m/%Y %I:%M %p')
                             return str(val)
                         except:
                             return str(val)
 
+                    # Helper to format weights
+                    def format_wt(val):
+                        try:
+                            v = float(val)
+                            return f"{v:.2f}" if v > 0 else "0.00"
+                        except:
+                            return "0.00"
+
                     q1, q2, q3 = st.columns(3)
                     
                     with q1:
                         st.markdown("**🛠️ GHAT DETAILS**")
-                        st.write(f"**QC:** {get_smart_val('X')}")
-                        st.write(f"**Weight:** {get_smart_val('Y')}g")
-                        st.write(f"**Date:** {clean_qc_date(r.get('GHAT_DATE', get_smart_val('GHAT_DATE')))}")
+                        # Mapping to 'GHAT_QC', 'GHAT_WT', 'GHAT_DATE'
+                        st.write(f"**QC:** {r.get('GHAT_QC', '---')}")
+                        st.write(f"**Weight:** {format_wt(r.get('GHAT_WT', 0))}g")
+                        st.write(f"**Date:** {clean_qc_date(r.get('GHAT_DATE', '---'))}")
 
                     with q2:
                         st.markdown("**💎 SETTING DETAILS**")
-                        st.write(f"**QC:** {get_smart_val('AH')}")
-                        st.write(f"**Weight:** {get_smart_val('AI')}g")
-                        st.write(f"**Date:** {clean_qc_date(r.get('SETTING_DATE', get_smart_val('SETTING_DATE')))}")
+                        # Mapping to 'SETTING_QC', 'SETTING_WT', 'SETTING_DATE'
+                        st.write(f"**QC:** {r.get('SETTING_QC', '---')}")
+                        st.write(f"**Weight:** {format_wt(r.get('SETTING_WT', 0))}g")
+                        st.write(f"**Date:** {clean_qc_date(r.get('SETTING_DATE', '---'))}")
 
                     with q3:
                         st.markdown("**✨ FINAL FINISH**")
-                        st.write(f"**Final QC:** {get_smart_val('AK')}")
-                        st.write(f"**Final Wt:** {get_smart_val('AL')}g")
-                        st.write(f"**QC Date:** {clean_qc_date(get_smart_val('AN'))}")
+                        # Mapping to 'FINAL_QC', 'FINAL_WT', 'FINAL_QC_DATE'
+                        st.write(f"**Final QC:** {r.get('FINAL_QC', '---')}")
+                        st.write(f"**Final Wt:** {format_wt(r.get('FINAL_WT', 0))}g")
+                        st.write(f"**QC Date:** {clean_qc_date(r.get('FINAL_QC_DATE', '---'))}")
 
-                    st.divider()
+                    st.divider() 
                     # --- 3. MOVEMENT DATA LOGIC ---
                     try:
                         def get_movement_data(table_id):
