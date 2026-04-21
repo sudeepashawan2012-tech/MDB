@@ -13,7 +13,6 @@ client = bigquery.Client(credentials=creds, project=creds.project_id)
 
 # 2. HELPER FUNCTIONS
 def get_drive_direct_link(url):
-    """Converts a standard Google Drive share link into a direct image source link"""
     try:
         if "id=" in str(url):
             file_id = str(url).split("id=")[1].split("&")[0]
@@ -28,36 +27,29 @@ def get_drive_direct_link(url):
 def refresh_native_tables():
     try:
         queries = [
-            # 1. Refresh Master Inventory (Making it Native)
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.master_inventory_native` 
                AS SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`""",
             
-            # 2. Refresh Sales Data (The one you just created!)
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.SALE_DATA_native` 
                AS SELECT * FROM `jewelry-sql-system.workshop_data.SALE_DATA`""",
             
-            # 3. Refresh Pre-Finish Movement (Keeping the Clustering for speed)
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.pre_finish_movement_native` 
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement`""",
             
-            # 4. Refresh Post-Finish Movement (Keeping the Clustering for speed)
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.post_finish_movement_native` 
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement`"""
         ]
-        
         for q in queries:
-            client.query(q).result() # This runs the query and waits for it to finish
-            
+            client.query(q).result()
         st.sidebar.success("All Workshop Data Refreshed!")
-        st.cache_data.clear() # This clears the app's memory so it shows the new data
+        st.cache_data.clear()
     except Exception as e:
         st.sidebar.error(f"Refresh Failed: {e}")
 
 @st.cache_data(ttl=300)
 def fetch_data():
     try:
-        query = """
-            SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory_native`"""
+        query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory_native`"
         df = client.query(query).to_dataframe()
         df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
         col_cust_check = next((c for c in df.columns if 'CUSTOMER' in c), None)
@@ -67,6 +59,16 @@ def fetch_data():
         return df
     except Exception as e:
         st.error(f"Connection Error: {e}")
+        return None
+
+@st.cache_data(ttl=300)
+def fetch_sales_data():
+    try:
+        query = "SELECT * FROM `jewelry-sql-system.workshop_data.SALE_DATA_native`"
+        sdf = client.query(query).to_dataframe()
+        return sdf
+    except Exception as e:
+        st.error(f"Sales Data Fetch Error: {e}")
         return None
 
 def std_round(x):
@@ -92,6 +94,7 @@ else:
     df = fetch_data()
 
     if df is not None:
+        # Mapping for existing reports
         col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
         col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
         col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
@@ -103,7 +106,7 @@ else:
         df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
         df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
-        menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report"])
+        menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Report"])
 
         st.sidebar.divider()
         if st.sidebar.button("🔄 REFRESH MOVEMENT DATA"):
@@ -184,7 +187,7 @@ else:
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
 
-       # --- REPORT 3: BAG HISTORY ---
+        # --- REPORT 3: BAG HISTORY ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
@@ -194,10 +197,7 @@ else:
                 
                 if not match.empty:
                     r = match.iloc[0]
-                    
-                    # SINGLE LAYOUT BLOCK
                     col_det, col_img = st.columns([2, 1])
-                    
                     with col_det:
                         st.markdown("### 📦 Bag Master Details")
                         sub1, sub2 = st.columns(2)
@@ -217,35 +217,25 @@ else:
                         st.markdown("### 🖼️ Design")
                         img_url = r.get('IMAGE_LINK')
                         if img_url and str(img_url).strip() not in ["", "---", "None"]:
-                            # ID extraction logic
                             if "id=" in str(img_url):
                                 file_id = str(img_url).split("id=")[1].split("&")[0]
                             elif "d/" in str(img_url):
                                 file_id = str(img_url).split("d/")[1].split("/")[0]
-                            else:
-                                file_id = None
+                            else: file_id = None
                             
                             if file_id:
                                 thumb_url = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
                                 st.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="100%" style="border-radius:10px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                                 st.caption("👆 Click to enlarge")
-                        else:
-                            st.info("No Image")
+                        else: st.info("No Image")
 
                     st.divider()
-                    # --- STOP HERE: Ensure there is no other "Bag Master Details" code below this line ---
-
-                    
-                    # ... (Continue with the rest of your QC Process Report and Movement Data below) ...
-                    # QC PROCESS REPORT
                     st.markdown("### 📋 QC Process Report")
-                    
                     def find_col(letter):
                         potential_names = [letter, f"_{letter}_", f"COLUMN_{letter}", letter.upper()]
                         for name in potential_names:
                             if name in match.columns: return name
                         return None
-
                     def get_smart_val(letter, default="---"):
                         col = find_col(letter)
                         if col and pd.notna(r[col]): return r[col]
@@ -257,13 +247,11 @@ else:
                         st.write(f"QC: {get_smart_val('X')}")
                         st.write(f"Weight: {get_smart_val('Y', '0')}g")
                         st.write(f"Date: {clean_date(r.get('GHAT_DATE', '---'))}")
-                    
                     with q2:
                         st.markdown("**💎 SETTING DETAILS**")
                         st.write(f"QC: {get_smart_val('AH')}")
                         st.write(f"Weight: {get_smart_val('AY', '0')}g")
                         st.write(f"Date: {clean_date(r.get('SETTING_DATE', '---'))}")
-
                     with q3:
                         st.markdown("**✨ FINAL FINISH**")
                         st.write(f"Final QC: {get_smart_val('AK')}")
@@ -285,8 +273,6 @@ else:
                         st.write(f"Date: {clean_date(get_smart_val('AG'))}")
 
                     st.divider()
-
-                    # 3. MOVEMENT DATA
                     try:
                         def get_movement_data(table_id):
                             query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE CAST(BAG_NO AS STRING) = '{search_bag}'"
@@ -294,8 +280,7 @@ else:
                             if m_df.empty: return m_df
                             m_df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in m_df.columns]
                             for c in m_df.columns:
-                                if 'DATE' in c:
-                                    m_df[c] = pd.to_datetime(m_df[c], errors='coerce').dt.strftime('%d/%m/%Y')
+                                if 'DATE' in c: m_df[c] = pd.to_datetime(m_df[c], errors='coerce').dt.strftime('%d/%m/%Y')
                             return m_df
 
                         st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
@@ -313,7 +298,6 @@ else:
                                 if out_cols: st.dataframe(df_pre[out_cols].dropna(how='all'), hide_index=True, use_container_width=True)
 
                         st.write("") 
-
                         st.markdown("### ✨ POST-FINISH MOVEMENT")
                         df_post = get_movement_data("post_finish_movement_native")
                         c3, c4 = st.columns(2)
@@ -327,7 +311,41 @@ else:
                             if not df_post.empty:
                                 in_cols_p = [c for c in df_post.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
                                 if in_cols_p: st.dataframe(df_post[in_cols_p].dropna(how='all'), hide_index=True, use_container_width=True)
-                    except Exception as mv_e:
-                        st.error(f"Movement Log Error: {mv_e}")
-                else:
-                    st.warning(f"Bag No {search_bag} not found.")
+                    except Exception as mv_e: st.error(f"Movement Log Error: {mv_e}")
+                else: st.warning(f"Bag No {search_bag} not found.")
+
+        # --- NEW REPORT: SALES REPORT ---
+        elif menu == "💰 Sales Report":
+            st.header("💰 Month-wise Sales Report")
+            sdf = fetch_sales_data()
+            if sdf is not None:
+                try:
+                    # Mapping by Index: A=0, K=10, L=11, T=19
+                    s_cust = sdf.iloc[:, 0]
+                    s_metal = pd.to_numeric(sdf.iloc[:, 10], errors='coerce').fillna(0)
+                    s_dia = pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0)
+                    s_date = pd.to_datetime(sdf.iloc[:, 19], errors='coerce')
+
+                    # Combine for processing
+                    proc_df = pd.DataFrame({
+                        'Customer': s_cust,
+                        'Metal': s_metal,
+                        'Dia': s_dia,
+                        'Date': s_date
+                    }).dropna(subset=['Date'])
+
+                    proc_df['Month_Year'] = proc_df['Date'].dt.strftime('%b-%y')
+                    proc_df['Sort_Order'] = proc_df['Date'].dt.to_period('M')
+
+                    # Group and Display
+                    unique_months = proc_df.sort_values('Date')['Month_Year'].unique()
+                    for month in unique_months:
+                        st.subheader(f"📅 {month}")
+                        m_data = proc_df[proc_df['Month_Year'] == month]
+                        summary = m_data.groupby('Customer').agg({'Metal': 'sum', 'Dia': 'sum'}).reset_index()
+                        summary['Metal'] = summary['Metal'].apply(std_round)
+                        summary['Dia'] = summary['Dia'].map('{:,.2f}'.format)
+                        summary.columns = ['Customer', 'Metal 18kt', 'Dia cts']
+                        st.table(summary)
+                except Exception as e:
+                    st.error(f"Report Error: {e}. Check if SALE_DATA has at least 20 columns.")
