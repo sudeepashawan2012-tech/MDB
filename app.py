@@ -196,20 +196,45 @@ else:
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
 
-        # --- REPORT 3: BAG HISTORY (Existing) ---
+       # --- REPORT 3: BAG HISTORY (Updated with Sales Cross-Check) ---
         elif menu == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
+            
             if search_bag:
+                # 1. Search in Master Inventory
                 match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
+                
+                # 2. Check Sale Data for Status Override
+                sdf = fetch_sales_data()
+                sale_record = None
+                if sdf is not None:
+                    # Looking for Bag No in Column D (Index 3) of Sale Data
+                    sale_match = sdf[sdf.iloc[:, 3].astype(str).str.upper() == search_bag.upper()]
+                    if not sale_match.empty:
+                        sale_record = sale_match.iloc[0]
+
                 if not match.empty:
                     r = match.iloc[0]
+                    
+                    # SOLD LOGIC OVERRIDE
+                    is_sold = sale_record is not None
+                    
+                    # If sold, pull Customer (Col A/Index 0) and Delivery Date (Col T/Index 19) from Sale Data
+                    display_cust = sale_record.iloc[0] if is_sold else r.get(col_cust, 'N/A')
+                    display_status = "SOLD" if is_sold else r.get(col_status, 'N/A')
+                    display_deliv = clean_date(sale_record.iloc[19]) if is_sold else clean_date(r.get('DELIVERY_DATE'))
+
                     col_det, col_img = st.columns([2, 1])
                     with col_det:
                         st.markdown("### 📦 Bag Master Details")
+                        
+                        if is_sold:
+                            st.error("🚨 ITEM SOLD")
+
                         sub1, sub2 = st.columns(2)
                         with sub1:
-                            st.write(f"**Customer:** {r.get(col_cust, 'N/A')}")
+                            st.write(f"**Customer:** {display_cust}")
                             st.write(f"**Type:** {r.get(col_order_type, 'N/A')}")
                             st.write(f"**Karigar:** {r.get('KARIGAR', 'N/A')}")
                             st.write(f"**Metal:** {std_round(r.get(col_metal, 0))}g 18kt")
@@ -217,8 +242,15 @@ else:
                         with sub2:
                             st.write(f"**Ordered:** {clean_date(r.get('ORDER_DATE'))}")
                             st.write(f"**Metal Iss:** {clean_date(r.get(col_issue_dt))}")
-                            st.write(f"**Deliv Dt:** {clean_date(r.get('DELIVERY_DATE'))}")
-                            st.write(f"**Status:** {r.get(col_status, 'N/A')}")
+                            st.write(f"**Deliv Dt:** {display_deliv}") 
+                            st.write(f"**Status:** {display_status}")
+                            
+                            # Additional details from Sale Data if sold (The red marked area)
+                            if is_sold:
+                                st.caption("✨ Sold Info from Sale Data")
+                                st.write(f"**Sold Wt:** {sale_record.iloc[10]}g") # Col K
+                                st.write(f"**Sold Dia:** {sale_record.iloc[11]} cts") # Col L
+
                     with col_img:
                         st.markdown("### 🖼️ Design")
                         img_url = r.get('IMAGE_LINK')
@@ -231,6 +263,8 @@ else:
                                 st.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="100%" style="border-radius:10px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                                 st.caption("👆 Click to enlarge")
                         else: st.info("No Image")
+
+                    # QC PROCESS AND MOVEMENT DATA CONTINUE BELOW WITHOUT CHANGES                    
                     st.divider()
                     st.markdown("### 📋 QC Process Report")
                     def find_col(letter):
