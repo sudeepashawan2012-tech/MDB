@@ -300,7 +300,7 @@ else:
 
        # --- REPORT 4: SALES REPORT (Interactive Bar Graphs - Dia Cts) ---
         elif menu == "💰 Sales Report":
-            st.header("💎 Diamond Sales Analytics")
+            st.header("💎 Sales Analytics")
             sdf = fetch_sales_data()
             
             if sdf is not None:
@@ -326,7 +326,7 @@ else:
                         month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
                         
                         # --- GRAPH 1: CUSTOMER DIA SALE (BAR) ---
-                        st.subheader("👥 Customer Diamond Sales (Month-wise)")
+                        st.subheader("👥 Customer Sales (Month-wise)")
                         cust_data = s_report.groupby(['Month', 'Customer'], observed=True)['Dia_Cts'].sum().reset_index()
                         
                         fig_cust = px.bar(
@@ -346,7 +346,7 @@ else:
                         st.divider()
 
                         # --- GRAPH 2: KARIGAR DIA PRODUCTION (BAR) ---
-                        st.subheader("⚒️ Karigar Diamond Production (Month-wise)")
+                        st.subheader("⚒️ Karigar Production (Month-wise)")
                         karigar_data = s_report.groupby(['Month', 'Karigar'], observed=True)['Dia_Cts'].sum().reset_index()
                         
                         fig_kari = px.bar(
