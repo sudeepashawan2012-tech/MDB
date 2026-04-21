@@ -298,63 +298,67 @@ else:
                     except Exception as mv_e: st.error(f"Movement Log Error: {mv_e}")
                 else: st.warning(f"Bag No {search_bag} not found.")
 
-       # --- REPORT 4: SALES REPORT (Strict Date & Data Cleaning) ---
+       # --- REPORT 4: SALES REPORT (Tables + Monthly Trend Graphs) ---
         elif menu == "💰 Sales Report":
-            st.header("💰 Month-wise Sales Report")
-            
-            # We clear cache here to ensure the "Deleted" records in Sheets are gone
+            st.header("💰 Sales Trend Analytics")
             sdf = fetch_sales_data()
             
             if sdf is not None:
                 try:
-                    # 1. Map columns (A=0, K=10, L=11, T=19)
-                    # We create a copy to avoid performance warnings
-                    s_report = pd.DataFrame()
-                    s_report['Customer'] = sdf.iloc[:, 0].astype(str).str.strip()
-                    s_report['Metal'] = pd.to_numeric(sdf.iloc[:, 10], errors='coerce').fillna(0)
-                    s_report['Dia'] = pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0)
-                    
-                    # 2. Strict Date Parsing (DD/MM/YYYY)
-                    # dayfirst=True is critical for your format
-                    s_report['Date'] = pd.to_datetime(sdf.iloc[:, 19], dayfirst=True, errors='coerce')
+                    # 1. Data Prep (A=Cust, F=Karigar, K=Metal, T=Date)
+                    s_report = pd.DataFrame({
+                        'Customer': sdf.iloc[:, 0].astype(str).str.strip(),
+                        'Karigar': sdf.iloc[:, 5].astype(str).str.strip(),
+                        'Metal': pd.to_numeric(sdf.iloc[:, 10], errors='coerce').fillna(0),
+                        'Date': pd.to_datetime(sdf.iloc[:, 19], dayfirst=True, errors='coerce')
+                    })
 
-                    # 3. CLEANING: Remove ghost rows
-                    # This removes rows where Customer is empty or Date is invalid
+                    # Clean Ghost Rows & filter only for the current year (2026)
                     s_report = s_report.dropna(subset=['Date'])
-                    s_report = s_report[s_report['Customer'] != "None"]
-                    s_report = s_report[s_report['Customer'] != "nan"]
-                    s_report = s_report[s_report['Customer'] != ""]
+                    s_report = s_report[s_report['Date'].dt.year == 2026]
+                    s_report = s_report[~s_report['Customer'].isin(["None", "nan", ""])]
 
                     if not s_report.empty:
-                        # 4. Formatting for Display
+                        # Create Month Name column for the X-axis
+                        s_report['Month'] = s_report['Date'].dt.strftime('%B')
+                        # Ensure chronological sorting (Jan, Feb, Mar...)
+                        month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+                        s_report['Month'] = pd.Categorical(s_report['Month'], categories=month_order, ordered=True)
+
+                        # --- GRAPH 1: CUSTOMER SALE MONTH-WISE ---
+                        st.subheader("👥 Customer Sales Trend (Month-wise)")
+                        # Pivoting data to show Month vs Customer
+                        cust_trend = s_report.groupby(['Month', 'Customer'], observed=True)['Metal'].sum().unstack().fillna(0)
+                        st.bar_chart(cust_trend)
+                        st.caption("Total Metal weight (18kt) sold per Customer across months.")
+
+                        st.divider()
+
+                        # --- GRAPH 2: KARIGAR SALE MONTH-WISE ---
+                        st.subheader("⚒️ Karigar Production Trend (Month-wise)")
+                        # Pivoting data to show Month vs Karigar
+                        karigar_trend = s_report.groupby(['Month', 'Karigar'], observed=True)['Metal'].sum().unstack().fillna(0)
+                        st.bar_chart(karigar_trend)
+                        st.caption("Total Metal weight (18kt) processed per Karigar across months.")
+
+                        st.divider()
+
+                        # --- MONTHLY DETAIL TABLES (Keeping your existing request) ---
+                        st.subheader("📋 Monthly Detailed Breakdown")
                         s_report['Month_Year'] = s_report['Date'].dt.strftime('%b-%y')
-                        
-                        # Sort by date so report is in order
-                        unique_months = s_report.sort_values('Date')['Month_Year'].unique()
+                        unique_months = s_report.sort_values('Date', ascending=False)['Month_Year'].unique()
 
                         for month in unique_months:
-                            st.subheader(f"📅 {month}")
-                            m_data = s_report[s_report['Month_Year'] == month]
-                            
-                            # Group by Customer
-                            summary = m_data.groupby('Customer').agg({'Metal': 'sum', 'Dia': 'sum'}).reset_index()
-                            
-                            # Add TOTAL Row
-                            t_row = pd.DataFrame([{
-                                'Customer': 'TOTAL',
-                                'Metal': summary['Metal'].sum(),
-                                'Dia': summary['Dia'].sum()
-                            }])
-                            
-                            final = pd.concat([summary, t_row], ignore_index=True)
-                            
-                            # Final Table Prep
-                            final['Metal 18kt'] = final['Metal'].apply(std_round)
-                            final['Dia cts'] = final['Dia'].map('{:,.2f}'.format)
-                            
-                            st.table(final[['Customer', 'Metal 18kt', 'Dia cts']])
+                            with st.expander(f"📅 Details for {month}"):
+                                m_data = s_report[s_report['Month_Year'] == month]
+                                summary = m_data.groupby('Customer').agg({'Metal': 'sum'}).reset_index()
+                                # Add TOTAL Row
+                                t_row = pd.DataFrame([{'Customer': 'TOTAL', 'Metal': summary['Metal'].sum()}])
+                                final = pd.concat([summary, t_row], ignore_index=True)
+                                final['Metal 18kt'] = final['Metal'].apply(std_round)
+                                st.table(final[['Customer', 'Metal 18kt']])
                     else:
-                        st.info("No sales records found after date cleaning.")
+                        st.info("No sales records found for the year 2026.")
 
                 except Exception as e:
-                    st.error(f"Sales Report Error: {e}")
+                    st.error(f"Analytics Error: {e}")
