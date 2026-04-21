@@ -235,48 +235,56 @@ else:
                         else: st.info("No Image")
                     
                     st.divider()
-                    # --- 2. QC PROCESS REPORT (Corrected Columns) ---
+                    # --- 2. QC PROCESS REPORT (Enhanced Column Mapping) ---
                     st.markdown("### 📋 QC Process Report")
                     
-                    def find_col(letter):
-                        # BigQuery often appends underscores or 'COLUMN_' to single letter headers
-                        potential_names = [letter, f"_{letter}_", f"COLUMN_{letter}", letter.upper()]
-                        for name in potential_names:
-                            if name in match.columns: return name
-                        return None
-                    
                     def get_smart_val(letter, default="---"):
-                        col = find_col(letter)
-                        if col and pd.notna(r[col]): 
+                        # We search for the letter, the letter with underscores, or 'COLUMN_' prefix
+                        target_cols = [letter, f"_{letter}_", f"COLUMN_{letter}", letter.upper()]
+                        col = next((c for c in target_cols if c in match.columns), None)
+                        
+                        if col is not None:
                             val = r[col]
-                            # If it's a numeric column (Weight), handle rounding/formatting
-                            if letter in ['Y', 'AI', 'AL']:
-                                try: return f"{float(val):.2f}"
-                                except: return val
-                            return val
+                            if pd.notna(val) and str(val).strip() not in ["", "None", "nan"]:
+                                # If it's a weight column, format it
+                                if letter in ['Y', 'AI', 'AL']:
+                                    try: return f"{float(val):.2f}"
+                                    except: return val
+                                return val
                         return default
+
+                    # Special date cleaner for QC dates that might have time attached
+                    def clean_qc_date(val):
+                        if pd.isna(val) or str(val).strip() in ["", "None", "nan", "---"]:
+                            return "---"
+                        try:
+                            # Try parsing DD/MM/YYYY with or without time
+                            dt = pd.to_datetime(val, dayfirst=True, errors='coerce')
+                            if pd.notnull(dt):
+                                return dt.strftime('%d/%m/%Y %I:%M %p')
+                            return str(val)
+                        except:
+                            return str(val)
 
                     q1, q2, q3 = st.columns(3)
                     
                     with q1:
                         st.markdown("**🛠️ GHAT DETAILS**")
-                        st.write(f"**QC:** {get_smart_val('X')}") # Column X
-                        st.write(f"**Weight:** {get_smart_val('Y')}g") # Column Y
-                        # Date using your existing GHAT_DATE logic but fallback to clean_date
-                        st.write(f"**Date:** {clean_date(r.get('GHAT_DATE', '---'))}")
+                        st.write(f"**QC:** {get_smart_val('X')}")
+                        st.write(f"**Weight:** {get_smart_val('Y')}g")
+                        st.write(f"**Date:** {clean_qc_date(r.get('GHAT_DATE', get_smart_val('GHAT_DATE')))}")
 
                     with q2:
                         st.markdown("**💎 SETTING DETAILS**")
-                        st.write(f"**QC:** {get_smart_val('AH')}") # Column AH
-                        st.write(f"**Weight:** {get_smart_val('AI')}g") # Column AI
-                        st.write(f"**Date:** {clean_date(r.get('SETTING_DATE', '---'))}")
+                        st.write(f"**QC:** {get_smart_val('AH')}")
+                        st.write(f"**Weight:** {get_smart_val('AI')}g")
+                        st.write(f"**Date:** {clean_qc_date(r.get('SETTING_DATE', get_smart_val('SETTING_DATE')))}")
 
                     with q3:
                         st.markdown("**✨ FINAL FINISH**")
-                        st.write(f"**Final QC:** {get_smart_val('AK')}") # Column AK
-                        st.write(f"**Final Wt:** {get_smart_val('AL')}g") # Column AL
-                        # QC Date from Column AN
-                        st.write(f"**QC Date:** {clean_date(get_smart_val('AN'))}") # Column AN
+                        st.write(f"**Final QC:** {get_smart_val('AK')}")
+                        st.write(f"**Final Wt:** {get_smart_val('AL')}g")
+                        st.write(f"**QC Date:** {clean_qc_date(get_smart_val('AN'))}")
 
                     st.divider()
                     # --- 3. MOVEMENT DATA LOGIC ---
