@@ -174,9 +174,9 @@ else:
                 # --- DISPLAY ---
                 # Added BAG NO to column layout
                 h1, h2, h3, h4, h5, h6, h7 = st.columns([1.2, 1, 1.2, 1, 0.8, 1, 1.5])
-                h1.markdown("**Bag No**")
-                h2.markdown("**Customer**")
-                h3.markdown("**Order Date**")
+                h1.markdown("**Customer**")    
+                h2.markdown("**Order Date**")
+                h3.markdown("**Bag No**")
                 h4.markdown("**Order Type**")
                 h5.markdown("**Delay**")
                 h6.markdown("**Karigar**")
