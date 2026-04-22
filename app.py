@@ -151,16 +151,18 @@ else:
                 f1, f2, f3 = st.columns(3)
                 
                 with f1:
-                    cust_list = sorted(final_delay[col_cust].unique())
-                    sel_cust = st.multiselect("Filter by Customer", cust_list)
+                    sel_cust = st.multiselect("Filter by Customer", sorted(final_delay[col_cust].unique()))
                 with f2:
-                    karigar_list = sorted(final_delay['KARIGAR'].astype(str).unique())
-                    sel_karigar = st.multiselect("Filter by Karigar", karigar_list)
+                    sel_karigar = st.multiselect("Filter by Karigar", sorted(final_delay['KARIGAR'].astype(str).unique()))
                 with f3:
-                    min_date = final_delay['ORDER_DATE_DT'].min()
-                    max_date = final_delay['ORDER_DATE_DT'].max()
-                    date_range = st.date_input("Filter by Order Date Range", [min_date, max_date])
-
+                    # Date Selector with DD/MM/YYYY logic
+                    min_date = final_delay['ORDER_DATE_DT'].min().date()
+                    max_date = final_delay['ORDER_DATE_DT'].max().date()
+                    date_range = st.date_input(
+                        "Filter by Order Date (DD/MM/YYYY)", 
+                        [min_date, max_date],
+                        format="DD/MM/YYYY" # This forces the display format
+                    )
                 # Apply Filters
                 if sel_cust:
                     final_delay = final_delay[final_delay[col_cust].isin(sel_cust)]
@@ -234,13 +236,25 @@ else:
             final_ghat = ghat_delay[small_p_mask | big_p_mask].sort_values('DELAY_DAYS', ascending=False)
 
             if not final_ghat.empty:
-                # 4. Filters (Including Order Type)
+                # --- FILTERING OPTIONS ---
                 st.write("#### 🔍 Filter Results")
                 f1, f2, f3, f4 = st.columns(4)
-                with f1: sel_cust = st.multiselect("Filter by Customer", sorted(final_ghat[col_cust].unique()))
-                with f2: sel_karigar = st.multiselect("Filter by Karigar", sorted(final_ghat['KARIGAR'].astype(str).unique()))
-                with f3: sel_otype = st.multiselect("Filter by Order Type", sorted(final_ghat[col_order_type].unique()))
-                with f4: date_range = st.date_input("Metal Issue Date Range", [final_ghat['METAL_ISSUE_DT'].min().date(), final_ghat['METAL_ISSUE_DT'].max().date()])
+                
+                with f1:
+                    sel_cust = st.multiselect("Filter by Customer", sorted(final_ghat[col_cust].unique()))
+                with f2:
+                    sel_karigar = st.multiselect("Filter by Karigar", sorted(final_ghat['KARIGAR'].astype(str).unique()))
+                with f3:
+                    sel_otype = st.multiselect("Filter by Order Type", sorted(final_ghat[col_order_type].unique()))
+                with f4:
+                    # Date Selector with DD/MM/YYYY logic
+                    min_d = final_ghat['METAL_ISSUE_DT'].min().date()
+                    max_d = final_ghat['METAL_ISSUE_DT'].max().date()
+                    date_range = st.date_input(
+                        "Metal Issue Date (DD/MM/YYYY)", 
+                        [min_d, max_d],
+                        format="DD/MM/YYYY" # This forces the display format
+                    )
 
                 # Applying UI filters
                 if sel_cust: final_ghat = final_ghat[final_ghat[col_cust].isin(sel_cust)]
