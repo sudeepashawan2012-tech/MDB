@@ -275,7 +275,7 @@ else:
                     c2.write(clean_date(row['ORDER_DATE']))
                     c3.write(f"**{row[col_bag]}**")
                     c4.write(clean_date(row[col_issue_dt]))
-                    c5.write(f"🕒 {int(row['DELAY_DAYS'])}days")
+                    c5.write(f"🕒 {int(row['DELAY_DAYS'])} Days")
                     c6.write(row.get('KARIGAR', '---'))
                     
                     img_url = row.get('IMAGE_LINK')
