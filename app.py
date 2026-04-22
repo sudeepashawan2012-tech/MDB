@@ -427,36 +427,90 @@ else:
                 else:
                     st.warning(f"Bag No {search_bag} not found.")
 
-        elif active_report == "💰 Sales Analytics":
+               # --- REPORT 4: SALES Analytics (Interactive Bar Graphs - Dia Cts) ---
+        elif menu == "💰 Sales Analytics":
             st.header("💎 Sales Analytics")
             sdf = fetch_sales_data()
+            
             if sdf is not None:
                 try:
                     import plotly.express as px
+                    
+                    # 1. Data Prep (A=Cust, J=Karigar, L=Dia Cts, T=Date)
                     s_report = pd.DataFrame({
                         'Customer': sdf.iloc[:, 0].astype(str).str.strip(),
-                        'Karigar': sdf.iloc[:, 9].astype(str).str.strip(),
-                        'Dia_Cts': pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0),
+                        'Karigar': sdf.iloc[:, 9].astype(str).str.strip(), # Column J (Index 9)
+                        'Dia_Cts': pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0), # Column L (Index 11)
                         'Date': pd.to_datetime(sdf.iloc[:, 19], dayfirst=True, errors='coerce')
                     })
+
+                    # Clean Ghost Rows & filter for 2026
                     s_report = s_report.dropna(subset=['Date'])
                     s_report = s_report[s_report['Date'].dt.year == 2026]
                     s_report = s_report[~s_report['Customer'].isin(["None", "nan", ""])]
 
                     if not s_report.empty:
+                        # Prepare Months for X-axis
                         s_report['Month'] = s_report['Date'].dt.strftime('%B')
                         month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
                         
+                        # --- GRAPH 1: CUSTOMER DIA SALE (BAR) ---
                         st.subheader("👥 Customer Sales (Month-wise)")
                         cust_data = s_report.groupby(['Month', 'Customer'], observed=True)['Dia_Cts'].sum().reset_index()
-                        fig_cust = px.bar(cust_data, x="Month", y="Dia_Cts", color="Customer", barmode="group", text_auto='.2f', category_orders={"Month": month_order}, template="plotly_dark")
+                        
+                        fig_cust = px.bar(
+                            cust_data, 
+                            x="Month", 
+                            y="Dia_Cts", 
+                            color="Customer",
+                            barmode="group", # Side-by-side bars
+                            text_auto='.2f', # Show 2 decimal places on top of bars
+                            category_orders={"Month": month_order},
+                            template="plotly_dark",
+                            animation_frame=None # You can add "Month" here if you want a play button!
+                        )
+                        fig_cust.update_layout(yaxis_title="Diamond Cts", xaxis_title="")
                         st.plotly_chart(fig_cust, use_container_width=True)
 
+                        st.divider()
+
+                        # --- GRAPH 2: KARIGAR DIA PRODUCTION (BAR) ---
                         st.subheader("⚒️ Karigar Production (Month-wise)")
                         karigar_data = s_report.groupby(['Month', 'Karigar'], observed=True)['Dia_Cts'].sum().reset_index()
-                        fig_kari = px.bar(karigar_data, x="Month", y="Dia_Cts", color="Karigar", barmode="group", text_auto='.2f', category_orders={"Month": month_order}, template="plotly_dark")
+                        
+                        fig_kari = px.bar(
+                            karigar_data, 
+                            x="Month", 
+                            y="Dia_Cts", 
+                            color="Karigar",
+                            barmode="group",
+                            text_auto='.2f',
+                            category_orders={"Month": month_order},
+                            template="plotly_dark"
+                        )
+                        fig_kari.update_layout(yaxis_title="Diamond Cts", xaxis_title="")
                         st.plotly_chart(fig_kari, use_container_width=True)
+
+                        st.divider()
+
+                        # --- MONTHLY DETAIL TABLES ---
+                        st.subheader("📋 Monthly Detailed Breakdown")
+                        s_report['Month_Year'] = s_report['Date'].dt.strftime('%b-%y')
+                        unique_months = s_report.sort_values('Date', ascending=False)['Month_Year'].unique()
+
+                        for month in unique_months:
+                            with st.expander(f"📅 Details for {month}"):
+                                m_data = s_report[s_report['Month_Year'] == month]
+                                summary = m_data.groupby('Customer').agg({'Dia_Cts': 'sum'}).reset_index()
+                                # Add TOTAL Row
+                                t_row = pd.DataFrame([{'Customer': 'TOTAL', 'Dia_Cts': summary['Dia_Cts'].sum()}])
+                                final = pd.concat([summary, t_row], ignore_index=True)
+                                final['Dia cts'] = final['Dia_Cts'].map('{:,.2f}'.format)
+                                st.table(final[['Customer', 'Dia cts']])
                     else:
                         st.info("No sales records found for 2026.")
+
+                except ImportError:
+                    st.error("Missing 'plotly' module. Please add it to requirements.txt.")
                 except Exception as e:
                     st.error(f"Analytics Error: {e}")
