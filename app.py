@@ -110,9 +110,8 @@ else:
         st.sidebar.markdown("### 📊 MAIN REPORTS")
         menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Analytics"], label_visibility="collapsed")
         
-        st.sidebar.divider()
         st.sidebar.markdown("### 🚨 DELAY REPORTS")
-delay_menu = st.sidebar.radio("SELECT DELAY REPORT", ["None", "🕒 CAD Delay Report", "🕒 Ghat Delay Report"], label_visibility="collapsed")
+        delay_menu = st.sidebar.radio("SELECT DELAY REPORT", ["None", "🕒 CAD Delay Report", "🕒 Ghat Delay Report"], label_visibility="collapsed")
 
         # Determine which report to show
         active_report = delay_menu if delay_menu != "None" else menu
