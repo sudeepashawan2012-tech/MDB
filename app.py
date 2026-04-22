@@ -112,7 +112,7 @@ else:
         
         st.sidebar.divider()
         st.sidebar.markdown("### 🚨 DELAY REPORTS")
-        delay_menu = st.sidebar.radio("SELECT DELAY REPORT", ["None", "🕒 CAD Delay Report"], label_visibility="collapsed")
+delay_menu = st.sidebar.radio("SELECT DELAY REPORT", ["None", "🕒 CAD Delay Report", "🕒 Ghat Delay Report"], label_visibility="collapsed")
 
         # Determine which report to show
         active_report = delay_menu if delay_menu != "None" else menu
@@ -208,6 +208,72 @@ else:
                     st.divider()
             else:
                 st.success("✅ No CAD delays found with current criteria.")
+
+# --- NEW REPORT: GHAT DELAY REPORT ---
+        elif active_report == "🕒 Ghat Delay Report":
+            st.header("🕒 Ghat Delay Report")
+            st.info("Logic: Metal Issued but Dia Not Issued. Delay > 5 days (Small <= 5cts) or > 9 days (Big > 5cts).")
+            
+            # 1. Prepare Data
+            ghat_df = df.copy()
+            ghat_df['METAL_ISSUE_DT'] = pd.to_datetime(ghat_df[col_issue_dt], dayfirst=True, errors='coerce')
+            
+            # Define Column for Diamond Issue
+            col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), 'DIA_ISSUE_DATE')
+            
+            # 2. Filtering Logic: Metal Issued is NOT blank AND Diamond Issued IS blank
+            mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \
+                   (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
+            
+            ghat_delay = ghat_df[mask].copy()
+            today = datetime.now()
+            ghat_delay['DELAY_DAYS'] = (today - ghat_delay['METAL_ISSUE_DT']).dt.days
+            
+            # 3. Size Logic (Small <= 5cts, Big > 5cts)
+            small_p_mask = (ghat_delay[col_dia] <= 5) & (ghat_delay['DELAY_DAYS'] > 5)
+            big_p_mask = (ghat_delay[col_dia] > 5) & (ghat_delay['DELAY_DAYS'] > 9)
+            final_ghat = ghat_delay[small_p_mask | big_p_mask].sort_values('DELAY_DAYS', ascending=False)
+
+            if not final_ghat.empty:
+                # 4. Filters (Including Order Type)
+                st.write("#### 🔍 Filter Results")
+                f1, f2, f3, f4 = st.columns(4)
+                with f1: sel_cust = st.multiselect("Filter by Customer", sorted(final_ghat[col_cust].unique()))
+                with f2: sel_karigar = st.multiselect("Filter by Karigar", sorted(final_ghat['KARIGAR'].astype(str).unique()))
+                with f3: sel_otype = st.multiselect("Filter by Order Type", sorted(final_ghat[col_order_type].unique()))
+                with f4: date_range = st.date_input("Metal Issue Date Range", [final_ghat['METAL_ISSUE_DT'].min().date(), final_ghat['METAL_ISSUE_DT'].max().date()])
+
+                # Applying UI filters
+                if sel_cust: final_ghat = final_ghat[final_ghat[col_cust].isin(sel_cust)]
+                if sel_karigar: final_ghat = final_ghat[final_ghat['KARIGAR'].astype(str).isin(sel_karigar)]
+                if sel_otype: final_ghat = final_ghat[final_ghat[col_order_type].isin(sel_otype)]
+                if len(date_range) == 2:
+                    final_ghat = final_ghat[(final_ghat['METAL_ISSUE_DT'].dt.date >= date_range[0]) & (final_ghat['METAL_ISSUE_DT'].dt.date <= date_range[1])]
+
+                # 5. Display Table
+                cols = st.columns([1, 1.2, 1, 1.2, 0.8, 1, 1.5])
+                headers = ["Customer", "Order Date", "Bag No", "Metal Issue", "Delay", "Karigar", "Design"]
+                for col, text in zip(cols, headers): col.markdown(f"**{text}**")
+                st.divider()
+
+                for _, row in final_ghat.iterrows():
+                    c1, c2, c3, c4, c5, c6, c7 = st.columns([1, 1.2, 1, 1.2, 0.8, 1, 1.5])
+                    c1.write(row[col_cust])
+                    c2.write(clean_date(row['ORDER_DATE']))
+                    c3.write(f"**{row[col_bag]}**")
+                    c4.write(clean_date(row[col_issue_dt]))
+                    c5.write(f"🕒 {int(row['DELAY_DAYS'])}d")
+                    c6.write(row.get('KARIGAR', '---'))
+                    
+                    img_url = row.get('IMAGE_LINK')
+                    if img_url and str(img_url).strip() not in ["", "---", "None"]:
+                        file_id = str(img_url).split("id=")[1].split("&")[0] if "id=" in str(img_url) else (str(img_url).split("d/")[1].split("/")[0] if "d/" in str(img_url) else None)
+                        if file_id:
+                            thumb = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
+                            c7.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
+                    st.divider()
+            else:
+                st.success("✅ No Ghat delays detected.")
 
         # --- OTHER REPORTS (REST UNCHANGED) ---
         elif active_report == "📊 Metal Requirements":
