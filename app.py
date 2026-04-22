@@ -114,7 +114,7 @@ else:
         st.sidebar.markdown("### 🚨 DELAY REPORTS")
         delay_menu = st.sidebar.radio("SELECT DELAY REPORT", ["None", "🕒 CAD Delay Report"], label_visibility="collapsed")
 
-        # Determine which report to show (Delay reports take precedence if selected)
+        # Determine which report to show
         active_report = delay_menu if delay_menu != "None" else menu
 
         st.sidebar.divider()
@@ -126,44 +126,71 @@ else:
 
         if active_report == "🕒 CAD Delay Report":
             st.header("🕒 CAD Delay Report (Stock Orders)")
-            st.info("Showing Stock Orders where CAD is pending for more than 5 days from Order Date.")
+            st.info("Stock Orders: CAD is pending (> 5 days) AND Metal Issue is pending.")
             
-            # Filter Logic
-            # 1. Is Stock Order
+            # Logic:
+            # 1. Order Type = STOCK
             # 2. CAD is blank
+            # 3. METAL ISSUE DATE is blank
             cad_df = df.copy()
             cad_df['ORDER_DATE_DT'] = pd.to_datetime(cad_df['ORDER_DATE'], dayfirst=True, errors='coerce')
             
             mask = (cad_df[col_order_type].str.contains("STOCK", case=False, na=False)) & \
-                   (cad_df['CAD'].isna() | (cad_df['CAD'].astype(str).str.strip() == ""))
+                   (cad_df['CAD'].isna() | (cad_df['CAD'].astype(str).str.strip() == "")) & \
+                   (cad_df[col_issue_dt].isna() | (cad_df[col_issue_dt].astype(str).str.strip() == ""))
             
             delay_data = cad_df[mask].copy()
-            
-            # Calculate Days Difference
             today = datetime.now()
             delay_data['CAD_DELAY'] = (today - delay_data['ORDER_DATE_DT']).dt.days
             
-            # Filter for > 5 Days
+            # Filter for > 5 Days Delay
             final_delay = delay_data[delay_data['CAD_DELAY'] > 5].sort_values('CAD_DELAY', ascending=False)
             
             if not final_delay.empty:
-                # Header row for the custom table
-                h1, h2, h3, h4, h5, h6 = st.columns([1.5, 1.2, 1.2, 1, 1, 1.5])
-                h1.markdown("**Customer**")
-                h2.markdown("**Order Date**")
-                h3.markdown("**Order Type**")
-                h4.markdown("**Delay**")
-                h5.markdown("**Karigar**")
-                h6.markdown("**Design**")
+                # --- FILTERING OPTIONS ---
+                st.write("#### 🔍 Filter Results")
+                f1, f2, f3 = st.columns(3)
+                
+                with f1:
+                    cust_list = sorted(final_delay[col_cust].unique())
+                    sel_cust = st.multiselect("Filter by Customer", cust_list)
+                with f2:
+                    karigar_list = sorted(final_delay['KARIGAR'].astype(str).unique())
+                    sel_karigar = st.multiselect("Filter by Karigar", karigar_list)
+                with f3:
+                    min_date = final_delay['ORDER_DATE_DT'].min()
+                    max_date = final_delay['ORDER_DATE_DT'].max()
+                    date_range = st.date_input("Filter by Order Date Range", [min_date, max_date])
+
+                # Apply Filters
+                if sel_cust:
+                    final_delay = final_delay[final_delay[col_cust].isin(sel_cust)]
+                if sel_karigar:
+                    final_delay = final_delay[final_delay['KARIGAR'].astype(str).isin(sel_karigar)]
+                if len(date_range) == 2:
+                    final_delay = final_delay[(final_delay['ORDER_DATE_DT'].dt.date >= date_range[0]) & 
+                                              (final_delay['ORDER_DATE_DT'].dt.date <= date_range[1])]
+
+                # --- DISPLAY ---
+                # Added BAG NO to column layout
+                h1, h2, h3, h4, h5, h6, h7 = st.columns([1.2, 1, 1.2, 1, 0.8, 1, 1.5])
+                h1.markdown("**Bag No**")
+                h2.markdown("**Customer**")
+                h3.markdown("**Order Date**")
+                h4.markdown("**Order Type**")
+                h5.markdown("**Delay**")
+                h6.markdown("**Karigar**")
+                h7.markdown("**Design**")
                 st.divider()
 
                 for _, row in final_delay.iterrows():
-                    c1, c2, c3, c4, c5, c6 = st.columns([1.5, 1.2, 1.2, 1, 1, 1.5])
-                    c1.write(row[col_cust])
-                    c2.write(clean_date(row['ORDER_DATE']))
-                    c3.write(row[col_order_type])
-                    c4.write(f"⚠️ {int(row['CAD_DELAY'])} Days")
-                    c5.write(row.get('KARIGAR', '---'))
+                    c1, c2, c3, c4, c5, c6, c7 = st.columns([1.2, 1, 1.2, 1, 0.8, 1, 1.5])
+                    c1.write(f"**{row[col_bag]}**") # BAG NO in Column E logic
+                    c2.write(row[col_cust])
+                    c3.write(clean_date(row['ORDER_DATE']))
+                    c4.write(row[col_order_type])
+                    c5.write(f"⚠️ {int(row['CAD_DELAY'])} Days")
+                    c6.write(row.get('KARIGAR', '---'))
                     
                     # Image Logic
                     img_url = row.get('IMAGE_LINK')
@@ -174,14 +201,15 @@ else:
                         
                         if file_id:
                             thumb_url = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
-                            c6.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
-                        else: c6.info("No Link")
+                            c7.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
+                        else: c7.info("No Link")
                     else:
-                        c6.write("No Image")
+                        c7.write("No Image")
                     st.divider()
             else:
-                st.success("✅ No CAD delays found for Stock Orders.")
+                st.success("✅ No CAD delays found with current criteria.")
 
+        # --- OTHER REPORTS (REST UNCHANGED) ---
         elif active_report == "📊 Metal Requirements":
             st.header("📊 Metal Requirement Report")
             exclude = ["HOLD", "CANCEL"]
