@@ -185,9 +185,9 @@ else:
 
                 for _, row in final_delay.iterrows():
                     c1, c2, c3, c4, c5, c6, c7 = st.columns([1.2, 1, 1.2, 1, 0.8, 1, 1.5])
-                    c1.write(f"**{row[col_bag]}**") # BAG NO in Column E logic
-                    c2.write(row[col_cust])
-                    c3.write(clean_date(row['ORDER_DATE']))
+                    c1.write(row[col_cust])
+                    c2.write(clean_date(row['ORDER_DATE']))
+                    c3.write(f"**{row[col_bag]}**") # BAG NO in Column E logic
                     c4.write(row[col_order_type])
                     c5.write(f"⚠️ {int(row['CAD_DELAY'])} Days")
                     c6.write(row.get('KARIGAR', '---'))
