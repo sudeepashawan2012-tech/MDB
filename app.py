@@ -78,7 +78,7 @@ def std_round(x):
 def clean_date(dt):
     try:
         if pd.isna(dt) or str(dt).strip() == "" or str(dt) == "None": return "---"
-        if isinstance(dt, str): dt = pd.to_datetime(dt)
+        if isinstance(dt, str): dt = pd.to_datetime(dt, dayfirst=True)
         return dt.strftime('%d-%b-%Y')
     except: return str(dt)
 
@@ -94,6 +94,7 @@ else:
     df = fetch_data()
 
     if df is not None:
+        # Define shared column names
         col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
         col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
         col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
@@ -105,15 +106,83 @@ else:
         df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
         df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
-        menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Analytics"])
+        # --- SIDEBAR NAVIGATION ---
+        st.sidebar.markdown("### 📊 MAIN REPORTS")
+        menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Analytics"], label_visibility="collapsed")
+        
+        st.sidebar.divider()
+        st.sidebar.markdown("### 🚨 DELAY REPORTS")
+        delay_menu = st.sidebar.radio("SELECT DELAY REPORT", ["None", "🕒 CAD Delay Report"], label_visibility="collapsed")
+
+        # Determine which report to show (Delay reports take precedence if selected)
+        active_report = delay_menu if delay_menu != "None" else menu
 
         st.sidebar.divider()
         if st.sidebar.button("🔄 REFRESH MOVEMENT DATA"):
             with st.sidebar.spinner("Syncing..."):
                 refresh_native_tables()
 
-        # --- REPORT 1: METAL REQUIREMENTS (Existing) ---
-        if menu == "📊 Metal Requirements":
+        # --- REPORT logic ---
+
+        if active_report == "🕒 CAD Delay Report":
+            st.header("🕒 CAD Delay Report (Stock Orders)")
+            st.info("Showing Stock Orders where CAD is pending for more than 5 days from Order Date.")
+            
+            # Filter Logic
+            # 1. Is Stock Order
+            # 2. CAD is blank
+            cad_df = df.copy()
+            cad_df['ORDER_DATE_DT'] = pd.to_datetime(cad_df['ORDER_DATE'], dayfirst=True, errors='coerce')
+            
+            mask = (cad_df[col_order_type].str.contains("STOCK", case=False, na=False)) & \
+                   (cad_df['CAD'].isna() | (cad_df['CAD'].astype(str).str.strip() == ""))
+            
+            delay_data = cad_df[mask].copy()
+            
+            # Calculate Days Difference
+            today = datetime.now()
+            delay_data['CAD_DELAY'] = (today - delay_data['ORDER_DATE_DT']).dt.days
+            
+            # Filter for > 5 Days
+            final_delay = delay_data[delay_data['CAD_DELAY'] > 5].sort_values('CAD_DELAY', ascending=False)
+            
+            if not final_delay.empty:
+                # Header row for the custom table
+                h1, h2, h3, h4, h5, h6 = st.columns([1.5, 1.2, 1.2, 1, 1, 1.5])
+                h1.markdown("**Customer**")
+                h2.markdown("**Order Date**")
+                h3.markdown("**Order Type**")
+                h4.markdown("**Delay**")
+                h5.markdown("**Karigar**")
+                h6.markdown("**Design**")
+                st.divider()
+
+                for _, row in final_delay.iterrows():
+                    c1, c2, c3, c4, c5, c6 = st.columns([1.5, 1.2, 1.2, 1, 1, 1.5])
+                    c1.write(row[col_cust])
+                    c2.write(clean_date(row['ORDER_DATE']))
+                    c3.write(row[col_order_type])
+                    c4.write(f"⚠️ {int(row['CAD_DELAY'])} Days")
+                    c5.write(row.get('KARIGAR', '---'))
+                    
+                    # Image Logic
+                    img_url = row.get('IMAGE_LINK')
+                    if img_url and str(img_url).strip() not in ["", "---", "None"]:
+                        file_id = None
+                        if "id=" in str(img_url): file_id = str(img_url).split("id=")[1].split("&")[0]
+                        elif "d/" in str(img_url): file_id = str(img_url).split("d/")[1].split("/")[0]
+                        
+                        if file_id:
+                            thumb_url = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
+                            c6.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
+                        else: c6.info("No Link")
+                    else:
+                        c6.write("No Image")
+                    st.divider()
+            else:
+                st.success("✅ No CAD delays found for Stock Orders.")
+
+        elif active_report == "📊 Metal Requirements":
             st.header("📊 Metal Requirement Report")
             exclude = ["HOLD", "CANCEL"]
             mask = (df[col_issue_dt].isna() | (df[col_issue_dt].astype(str).str.strip() == "")) & (~df[col_status].isin(exclude))
@@ -136,8 +205,7 @@ else:
                 else:
                     st.info(f"No Metal Pending For {o_type.title()} Orders")
 
-        # --- REPORT 2: CSR (Added Totals) ---
-        elif menu == "📋 CSR":
+        elif active_report == "📋 CSR":
             st.header("📋 Customer Status Report")
             status_seq = {"SEQUENCE": 0, "ENGRAVING/HUID": 1, "IGI": 2, "ON HAND": 3, "FINAL QC": 4, "SETTING QC OK": 5, "SETTING": 6, "GHAT OK": 7, "CASTING": 8, "METAL ISSUED": 9, "METAL PENDING": 10, "HOLD": 12, "CANCEL": 13}
             csr_df = df.copy()
@@ -147,7 +215,6 @@ else:
                     cust_data = csr_df[csr_df[col_cust] == cust]
                     summary = cust_data.groupby([col_status, 'Seq']).agg({col_bag: 'count', col_metal: 'sum', col_dia: 'sum'}).reset_index().sort_values('Seq')
                     
-                    # Calculate Total Row
                     total_row = pd.DataFrame([{
                         col_status: 'TOTAL',
                         col_bag: summary[col_bag].sum(),
@@ -161,8 +228,7 @@ else:
                     
                     st.dataframe(final_summary[[col_status, col_bag, 'Metal 18kt', 'Dia Cts']].rename(columns={col_status: 'Status', col_bag: 'Bag Qty'}), hide_index=True, use_container_width=True)
 
-        # --- REPORT: SCOPE OF WORK (Existing) ---
-        elif menu == "📋 Scope of Work":
+        elif active_report == "📋 Scope of Work":
             st.header("📋 Scope of Work")
             issued_mask = df[col_issue_dt].notna() & (df[col_issue_dt].astype(str).str.strip() != "")
             is_cust = df[col_order_type].str.contains("CUSTOMER", case=False, na=False)
@@ -196,8 +262,7 @@ else:
             display_section("Metal Issued Stock Orders", df[issued_mask & is_stock])
             display_section("Metal Pending Stock Orders", df[~issued_mask & is_stock])
 
-# --- REPORT 3: BAG HISTORY ---
-        elif menu == "🔍 Bag History Report":
+        elif active_report == "🔍 Bag History Report":
             st.header("🔍 Bag History Report")
             search_bag = st.text_input("Enter Bag Number to Search").strip()
             
@@ -235,13 +300,9 @@ else:
                         else: st.info("No Image")
                     
                     st.divider()
-                    # --- 2. QC PROCESS REPORT (Final Flexible Mapping) ---
                     st.header("📋 QC Process Report")
                     
-                    # 1. Flexible Column Finder Helper
                     def get_val_flex(prefix):
-                        # This finds the first column that STARTS with your prefix (e.g., 'GHAT_QC')
-                        # to handle those extra underscores like 'GHAT_WT_____'
                         col = next((c for c in match.columns if c.startswith(prefix)), None)
                         if col:
                             val = r[col]
@@ -249,7 +310,6 @@ else:
                                 return val
                         return "---"
 
-                    # 2. Weight Formatter Helper
                     def get_wt_flex(prefix):
                         col = next((c for c in match.columns if c.startswith(prefix)), None)
                         if col:
@@ -257,35 +317,28 @@ else:
                             try:
                                 v = float(val)
                                 return f"{v:.2f}" if v > 0 else "0.00"
-                            except:
-                                return "0.00"
+                            except: return "0.00"
                         return "0.00"
 
-                    # 3. Date Formatter Helper
                     def get_date_flex(prefix):
                         val = get_val_flex(prefix)
                         if val == "---": return "---"
                         try:
-                            dt = pd.to_datetime(val, errors='coerce')
+                            dt = pd.to_datetime(val, dayfirst=True, errors='coerce')
                             return dt.strftime('%d/%m/%Y %I:%M %p') if pd.notnull(dt) else str(val)
-                        except:
-                            return str(val)
+                        except: return str(val)
 
                     q1, q2, q3 = st.columns(3)
-                    
                     with q1:
                         st.markdown("**🛠️ GHAT DETAILS**")
-                        # Uses prefix search to find 'GHAT_QC' and 'GHAT_WT'
                         st.write(f"**QC:** {get_val_flex('GHAT_QC')}")
                         st.write(f"**Weight:** {get_wt_flex('GHAT_WT')}g")
                         st.write(f"**Date:** {get_date_flex('GHAT_DATE')}")
-
                     with q2:
                         st.markdown("**💎 SETTING DETAILS**")
                         st.write(f"**QC:** {get_val_flex('SETTING_QC')}")
                         st.write(f"**Weight:** {get_wt_flex('SETTING_WT')}g")
                         st.write(f"**Date:** {get_date_flex('SETTING_DATE')}")
-
                     with q3:
                         st.markdown("**✨ FINAL FINISH**")
                         st.write(f"**Final QC:** {get_val_flex('FINAL_QC')}")
@@ -293,17 +346,14 @@ else:
                         st.write(f"**QC Date:** {get_date_flex('FINAL_QC_DATE')}")
 
                     st.divider() 
-                    # --- 3. MOVEMENT DATA LOGIC ---
                     try:
                         def get_movement_data(table_id):
                             query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE CAST(BAG_NO AS STRING) = '{search_bag}'"
                             m_df = client.query(query).to_dataframe()
                             if m_df.empty: return m_df
-                            
                             m_df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in m_df.columns]
                             date_col = next((c for c in m_df.columns if 'DATE' in c), None)
                             time_col = next((c for c in m_df.columns if 'TIME' in c), None)
-
                             if date_col:
                                 m_df['SORT_DATE'] = pd.to_datetime(m_df[date_col], dayfirst=True, errors='coerce')
                                 if time_col:
@@ -311,14 +361,11 @@ else:
                                     m_df = m_df.sort_values(by=['SORT_DATE', 'SORT_TIME'], ascending=True)
                                 else:
                                     m_df = m_df.sort_values(by='SORT_DATE', ascending=True)
-
                             for c in m_df.columns:
                                 if 'DATE' in c and c != 'SORT_DATE':
                                     m_df[c] = pd.to_datetime(m_df[c], dayfirst=True, errors='coerce').dt.strftime('%d/%m/%Y')
-                            
                             return m_df.drop(columns=['SORT_DATE', 'SORT_TIME'], errors='ignore')
 
-                        # DISPLAY MOVEMENT TABLES
                         st.markdown("### 🛠️ PRE-FINISH MOVEMENT")
                         df_pre = get_movement_data("pre_finish_movement_native")
                         c1, c2 = st.columns(2)
@@ -347,96 +394,41 @@ else:
                             if not df_post.empty:
                                 in_cols_p = [c for c in df_post.columns if ('IN' in c or 'PURPOSE' in c) and 'OUT' not in c and 'BAG' not in c]
                                 if in_cols_p: st.dataframe(df_post[in_cols_p].dropna(how='all'), hide_index=True, use_container_width=True)
-
                     except Exception as mv_e:
                         st.error(f"Movement Log Error: {mv_e}")
                 else:
                     st.warning(f"Bag No {search_bag} not found.")
 
-       # --- REPORT 4: SALES Analytics (Interactive Bar Graphs - Dia Cts) ---
-        elif menu == "💰 Sales Analytics":
+        elif active_report == "💰 Sales Analytics":
             st.header("💎 Sales Analytics")
             sdf = fetch_sales_data()
-            
             if sdf is not None:
                 try:
                     import plotly.express as px
-                    
-                    # 1. Data Prep (A=Cust, J=Karigar, L=Dia Cts, T=Date)
                     s_report = pd.DataFrame({
                         'Customer': sdf.iloc[:, 0].astype(str).str.strip(),
-                        'Karigar': sdf.iloc[:, 9].astype(str).str.strip(), # Column J (Index 9)
-                        'Dia_Cts': pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0), # Column L (Index 11)
+                        'Karigar': sdf.iloc[:, 9].astype(str).str.strip(),
+                        'Dia_Cts': pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0),
                         'Date': pd.to_datetime(sdf.iloc[:, 19], dayfirst=True, errors='coerce')
                     })
-
-                    # Clean Ghost Rows & filter for 2026
                     s_report = s_report.dropna(subset=['Date'])
                     s_report = s_report[s_report['Date'].dt.year == 2026]
                     s_report = s_report[~s_report['Customer'].isin(["None", "nan", ""])]
 
                     if not s_report.empty:
-                        # Prepare Months for X-axis
                         s_report['Month'] = s_report['Date'].dt.strftime('%B')
                         month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
                         
-                        # --- GRAPH 1: CUSTOMER DIA SALE (BAR) ---
                         st.subheader("👥 Customer Sales (Month-wise)")
                         cust_data = s_report.groupby(['Month', 'Customer'], observed=True)['Dia_Cts'].sum().reset_index()
-                        
-                        fig_cust = px.bar(
-                            cust_data, 
-                            x="Month", 
-                            y="Dia_Cts", 
-                            color="Customer",
-                            barmode="group", # Side-by-side bars
-                            text_auto='.2f', # Show 2 decimal places on top of bars
-                            category_orders={"Month": month_order},
-                            template="plotly_dark",
-                            animation_frame=None # You can add "Month" here if you want a play button!
-                        )
-                        fig_cust.update_layout(yaxis_title="Diamond Cts", xaxis_title="")
+                        fig_cust = px.bar(cust_data, x="Month", y="Dia_Cts", color="Customer", barmode="group", text_auto='.2f', category_orders={"Month": month_order}, template="plotly_dark")
                         st.plotly_chart(fig_cust, use_container_width=True)
 
-                        st.divider()
-
-                        # --- GRAPH 2: KARIGAR DIA PRODUCTION (BAR) ---
                         st.subheader("⚒️ Karigar Production (Month-wise)")
                         karigar_data = s_report.groupby(['Month', 'Karigar'], observed=True)['Dia_Cts'].sum().reset_index()
-                        
-                        fig_kari = px.bar(
-                            karigar_data, 
-                            x="Month", 
-                            y="Dia_Cts", 
-                            color="Karigar",
-                            barmode="group",
-                            text_auto='.2f',
-                            category_orders={"Month": month_order},
-                            template="plotly_dark"
-                        )
-                        fig_kari.update_layout(yaxis_title="Diamond Cts", xaxis_title="")
+                        fig_kari = px.bar(karigar_data, x="Month", y="Dia_Cts", color="Karigar", barmode="group", text_auto='.2f', category_orders={"Month": month_order}, template="plotly_dark")
                         st.plotly_chart(fig_kari, use_container_width=True)
-
-                        st.divider()
-
-                        # --- MONTHLY DETAIL TABLES ---
-                        st.subheader("📋 Monthly Detailed Breakdown")
-                        s_report['Month_Year'] = s_report['Date'].dt.strftime('%b-%y')
-                        unique_months = s_report.sort_values('Date', ascending=False)['Month_Year'].unique()
-
-                        for month in unique_months:
-                            with st.expander(f"📅 Details for {month}"):
-                                m_data = s_report[s_report['Month_Year'] == month]
-                                summary = m_data.groupby('Customer').agg({'Dia_Cts': 'sum'}).reset_index()
-                                # Add TOTAL Row
-                                t_row = pd.DataFrame([{'Customer': 'TOTAL', 'Dia_Cts': summary['Dia_Cts'].sum()}])
-                                final = pd.concat([summary, t_row], ignore_index=True)
-                                final['Dia cts'] = final['Dia_Cts'].map('{:,.2f}'.format)
-                                st.table(final[['Customer', 'Dia cts']])
                     else:
                         st.info("No sales records found for 2026.")
-
-                except ImportError:
-                    st.error("Missing 'plotly' module. Please add it to requirements.txt.")
                 except Exception as e:
                     st.error(f"Analytics Error: {e}")
