@@ -182,10 +182,9 @@ if st.sidebar.button("🚪 Logout"):
     for key in ["user_role", "user_perms", "_selected_role"]:
         st.session_state.pop(key, None)
     st.rerun()
-else:
-    df = fetch_data()
 
-    if df is not None:
+df = fetch_data()
+if df is not None:
         # Define shared column names
         col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
         col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
