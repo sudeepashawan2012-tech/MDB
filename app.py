@@ -143,33 +143,44 @@ USER_ROLES = {
 }
 
 # Login screen
+# Login screen
 if "user_role" not in st.session_state:
     st.title("🔒 Workshop Login")
     
-    # Show role buttons in a clean layout
-    cols = st.columns(3)
-    role_names = list(USER_ROLES.keys())
+    # Check if a role was already selected in this session
+    selected_role = st.session_state.get("_selected_role", None)
     
-    selected_role = None
-    for idx, role in enumerate(role_names):
-        with cols[idx % 3]:
-            if st.button(f"🔑 {role}", use_container_width=True):
-                selected_role = role
+    # If no role selected yet, show role buttons
+    if not selected_role:
+        cols = st.columns(3)
+        role_names = list(USER_ROLES.keys())
+        
+        for idx, role in enumerate(role_names):
+            with cols[idx % 3]:
+                if st.button(f"🔑 {role}", use_container_width=True, key=f"role_{role}"):
+                    st.session_state["_selected_role"] = role
+                    st.rerun()
     
-    # If role selected, show password input
+    # If role IS selected, show password input
     if selected_role:
-        st.session_state["_selected_role"] = selected_role
         st.markdown(f"### Enter password for **{selected_role}**")
         pwd = st.text_input("Password", type="password", key="pwd_input")
         
-        if st.button("Login"):
-            if pwd == USER_ROLES[selected_role]["password"]:
-                st.session_state["user_role"] = selected_role
-                st.session_state["user_perms"] = USER_ROLES[selected_role]
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("🔙 Back"):
+                st.session_state.pop("_selected_role", None)
                 st.rerun()
-            else:
-                st.error("❌ Wrong password")
+        with col2:
+            if st.button("✅ Login", type="primary"):
+                if pwd == USER_ROLES[selected_role]["password"]:
+                    st.session_state["user_role"] = selected_role
+                    st.session_state["user_perms"] = USER_ROLES[selected_role]
+                    st.rerun()
+                else:
+                    st.error("❌ Wrong password")
     
+    st.stop()  # Don't run rest of app until logged in    
     st.stop()  # Don't run rest of app until logged in
 
 # --- USER IS LOGGED IN ---
