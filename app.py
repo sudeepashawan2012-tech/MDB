@@ -82,14 +82,106 @@ def clean_date(dt):
         return dt.strftime('%d-%b-%Y')
     except: return str(dt)
 
-# 3. RUN APP (Login Logic)
-if "password_correct" not in st.session_state:
-    st.title("🔒 Login")
-    pwd = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if pwd == st.secrets["workshop_password"]:
-            st.session_state["password_correct"] = True
-            st.rerun()
+# ========== ROLE-BASED LOGIN SYSTEM ==========
+
+# Define users, passwords, and their permissions
+USER_ROLES = {
+    "FOLLOWUP": {
+        "password": "followup123",
+        "can_view_reports": True,
+        "can_view_cad_delay": True,
+        "ghat_access": "FOLLOWUP",      # Only FOLLOWUP items
+        "can_download": False,
+        "can_edit": True,
+        "is_mgmt_viewonly": False
+    },
+    "QC": {
+        "password": "qc123",
+        "can_view_reports": False,
+        "can_view_cad_delay": False,
+        "ghat_access": "QC",            # Only QC items
+        "can_download": False,
+        "can_edit": True,
+        "is_mgmt_viewonly": False
+    },
+    "BAGGING": {
+        "password": "bagging123",
+        "can_view_reports": False,
+        "can_view_cad_delay": False,
+        "ghat_access": "BAGGING",       # Only BAGGING items
+        "can_download": False,
+        "can_edit": True,
+        "is_mgmt_viewonly": False
+    },
+    "ADMIN": {
+        "password": "admin123",
+        "can_view_reports": True,
+        "can_view_cad_delay": True,
+        "ghat_access": "ALL",           # All items
+        "can_download": True,
+        "can_edit": True,
+        "is_mgmt_viewonly": False
+    },
+    "MGMT": {
+        "password": "mgmt123",
+        "can_view_reports": True,
+        "can_view_cad_delay": True,
+        "ghat_access": "ALL",           # All items (view-only)
+        "can_download": True,
+        "can_edit": False,              # VIEW ONLY
+        "is_mgmt_viewonly": True
+    },
+    "OWNER": {
+        "password": "owner123",
+        "can_view_reports": True,
+        "can_view_cad_delay": True,
+        "ghat_access": "ALL",           # All items + edit
+        "can_download": True,
+        "can_edit": True,
+        "is_mgmt_viewonly": False
+    }
+}
+
+# Login screen
+if "user_role" not in st.session_state:
+    st.title("🔒 Workshop Login")
+    
+    # Show role buttons in a clean layout
+    cols = st.columns(3)
+    role_names = list(USER_ROLES.keys())
+    
+    selected_role = None
+    for idx, role in enumerate(role_names):
+        with cols[idx % 3]:
+            if st.button(f"🔑 {role}", use_container_width=True):
+                selected_role = role
+    
+    # If role selected, show password input
+    if selected_role:
+        st.session_state["_selected_role"] = selected_role
+        st.markdown(f"### Enter password for **{selected_role}**")
+        pwd = st.text_input("Password", type="password", key="pwd_input")
+        
+        if st.button("Login"):
+            if pwd == USER_ROLES[selected_role]["password"]:
+                st.session_state["user_role"] = selected_role
+                st.session_state["user_perms"] = USER_ROLES[selected_role]
+                st.rerun()
+            else:
+                st.error("❌ Wrong password")
+    
+    st.stop()  # Don't run rest of app until logged in
+
+# --- USER IS LOGGED IN ---
+user_role = st.session_state["user_role"]
+user_perms = st.session_state["user_perms"]
+
+# Show who is logged in in sidebar
+st.sidebar.markdown(f"### 👤 Logged in as: **{user_role}**")
+if st.sidebar.button("🚪 Logout"):
+    for key in ["user_role", "user_perms", "_selected_role"]:
+        st.session_state.pop(key, None)
+    st.rerun()
 else:
     df = fetch_data()
 
