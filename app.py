@@ -548,10 +548,10 @@ if df is not None:
         else:
             st.success("✅ No CAD delays found with current criteria.")
 
-        # --- GHAT DELAY REPORT v2 ---
+            # --- GHAT DELAY REPORT v2 ---
     elif active_report == "🕒 Ghat Delay Report":
         st.header("🕒 Ghat Delay Report v2")
-        st.info("Logic: Metal Issued +7 business days, Diamond Issue blank. Auto-escalation: 2 business days per department.")
+        st.info("Logic: Metal Issued +7 business days, Diamond Issue blank. Auto-escalation by date thresholds.")
         
         create_delay_tables()
         
@@ -575,63 +575,66 @@ if df is not None:
         # v2: Items >7 business days delay
         ghat_delay = ghat_delay[ghat_delay['DELAY_DAYS'] > 7].sort_values('DELAY_DAYS', ascending=False)
         
-        # Get existing delay actions
+        # Get existing delay actions (manual assignments + closes)
         actions_df = get_delay_actions()
         
+        # Merge with actions to check for manual overrides
         if not actions_df.empty:
             actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
-            # CRITICAL FIX: Rename BAG_NO to match col_bag before merge
             actions_df = actions_df.rename(columns={'BAG_NO': col_bag})
             ghat_delay = ghat_delay.merge(
                 actions_df[[col_bag, 'ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE']], 
                 on=col_bag, how='left'
             )
-            ghat_delay['ASSIGNED_TO'] = ghat_delay['ASSIGNED_TO'].fillna('FOLLOWUP')
-            ghat_delay['STATUS'] = ghat_delay['STATUS'].fillna('OPEN')
         else:
-            ghat_delay['ASSIGNED_TO'] = 'FOLLOWUP'
-            ghat_delay['STATUS'] = 'OPEN'
+            ghat_delay['ASSIGNED_TO'] = None
+            ghat_delay['STATUS'] = None
+            ghat_delay['REMARKS'] = None
+            ghat_delay['ACTION_DATE'] = None
         
-        # Auto-escalate
-        auto_escalate_delays(ghat_delay)
+        # Determine effective assignment based on date thresholds + manual overrides
+        def get_effective_assignment(row):
+            delay_days = row['DELAY_DAYS']
+            manual_status = row.get('STATUS')
+            manual_assign = row.get('ASSIGNED_TO')
+            
+            # If manually closed, stay closed
+            if manual_status == 'CLOSED':
+                return 'CLOSED'
+            
+            # If manually forwarded by a user (not SYSTEM auto-escalated), use that assignment
+            if pd.notna(manual_assign) and manual_assign not in ['FOLLOWUP', None] and manual_status == 'FORWARDED':
+                return manual_assign
+            
+            # Date-based auto-assignment
+            if 7 < delay_days <= 9:
+                return 'FOLLOWUP'
+            elif 9 < delay_days <= 11:
+                return 'QC'
+            elif 11 < delay_days <= 13:
+                return 'ADMIN'
+            elif delay_days > 13:
+                return 'MGMT'
+            else:
+                return 'FOLLOWUP'
         
-        # Re-fetch after auto-escalation
-        actions_df = get_delay_actions()
-        if not actions_df.empty:
-            actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
-            actions_df = actions_df.rename(columns={'BAG_NO': col_bag})
-            ghat_delay = ghat_delay.drop(columns=['ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE'], errors='ignore')
-            ghat_delay = ghat_delay.merge(
-                actions_df[[col_bag, 'ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE']], 
-                on=col_bag, how='left'
-            )
-            ghat_delay['ASSIGNED_TO'] = ghat_delay['ASSIGNED_TO'].fillna('FOLLOWUP')
-            ghat_delay['STATUS'] = ghat_delay['STATUS'].fillna('OPEN')
+        ghat_delay['EFFECTIVE_ASSIGNED'] = ghat_delay.apply(get_effective_assignment, axis=1)
         
-        # --- DEPARTMENT FILTERING ---
+        # --- DEPARTMENT FILTERING BY EFFECTIVE ASSIGNMENT ---
         if user_role == "FOLLOWUP":
-            # FOLLOWUP sees only items 7-9 business days (newly triggered, not yet escalated)
-            final_ghat = ghat_delay[
-                (ghat_delay['ASSIGNED_TO'] == 'FOLLOWUP') & 
-                (ghat_delay['DELAY_DAYS'] <= 9)
-            ].copy()
+            final_ghat = ghat_delay[ghat_delay['EFFECTIVE_ASSIGNED'] == 'FOLLOWUP'].copy()
         elif user_role == "QC":
-            final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == 'QC'].copy()
+            final_ghat = ghat_delay[ghat_delay['EFFECTIVE_ASSIGNED'] == 'QC'].copy()
         elif user_role == "ADMIN":
-            final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == 'ADMIN'].copy()
+            final_ghat = ghat_delay[ghat_delay['EFFECTIVE_ASSIGNED'] == 'ADMIN'].copy()
         elif user_role == "MGMT":
-            # MGMT sees ALL items that are either:
-            # - Auto-escalated to MGMT, OR
-            # - Forwarded to MGMT by another dept, OR
-            # - Still at MGMT and not closed/forwarded elsewhere
-            final_ghat = ghat_delay[
-                (ghat_delay['ASSIGNED_TO'] == 'MGMT') | 
-                (ghat_delay['STATUS'] == 'AUTO_ESCALATED')
-            ].copy()
+            final_ghat = ghat_delay[ghat_delay['EFFECTIVE_ASSIGNED'] == 'MGMT'].copy()
         elif user_role == "BAGGING":
+            # BAGGING only sees items manually assigned to BAGGING
             final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == 'BAGGING'].copy()
         elif user_role == "OWNER":
-            final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == 'OWNER'].copy()
+            # OWNER sees everything
+            final_ghat = ghat_delay.copy()
         else:
             final_ghat = ghat_delay.copy()
         
@@ -672,11 +675,13 @@ if df is not None:
                 c3.write(f"**{row[col_bag]}**")
                 c4.write(clean_date(row[col_issue_dt]))
                 c5.write(f"🕒 {int(row['DELAY_DAYS'])} Days")
-                c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{row['ASSIGNED_TO']}</span>", unsafe_allow_html=True)
+                c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{row['EFFECTIVE_ASSIGNED']}</span>", unsafe_allow_html=True)
                 c7.write(row.get('KARIGAR', '---'))
                 
-                status_color = "green" if row['STATUS'] == 'CLOSED' else "orange" if row['STATUS'] == 'AUTO_ESCALATED' else "blue"
-                c8.markdown(f"<span style='color:{status_color};'>{row['STATUS']}</span>", unsafe_allow_html=True)
+                # Show status: CLOSED, FORWARDED, or date-based
+                display_status = row.get('STATUS') if pd.notna(row.get('STATUS')) else 'DATE_TRIGGERED'
+                status_color = "green" if display_status == 'CLOSED' else "purple" if display_status == 'FORWARDED' else "blue"
+                c8.markdown(f"<span style='color:{status_color};'>{display_status}</span>", unsafe_allow_html=True)
                 
                 img_url = row.get('IMAGE_LINK')
                 if img_url and str(img_url).strip() not in ["", "---", "None"]:
@@ -687,10 +692,10 @@ if df is not None:
                 st.divider()
                 
                 bag_no = row[col_bag]
-                current_assigned = row['ASSIGNED_TO']
-                current_status = row['STATUS']
+                current_assigned = row['EFFECTIVE_ASSIGNED']
+                current_status = row.get('STATUS')
                 
-                # Action panel using st.form for performance (no re-runs on typing)
+                # Action panel using st.form for performance
                 with st.expander(f"📝 Actions for Bag {bag_no}"):
                     # Show history
                     history = get_delay_history_cached(bag_no)
