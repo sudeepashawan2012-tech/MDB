@@ -549,6 +549,84 @@ if df is not None:
             st.success("✅ No CAD delays found with current criteria.")
 
                 # --- GHAT DELAY REPORT v2 ---
+        elif active_report == "🏢 Department Dashboard":
+        st.header("🏢 Department Dashboard")
+        
+        dept_info = {
+            "FOLLOWUP": {"title": "FOLLOWUP DEPARTMENT", "color": "#FF6B35", "icon": "📋", "desc": "Track pending items | 7-9 Day Window"},
+            "QC": {"title": "QC DEPARTMENT", "color": "#4ECDC4", "icon": "🔍", "desc": "Quality Control | 10-11 Day Window"},
+            "ADMIN": {"title": "ADMIN DEPARTMENT", "color": "#45B7D1", "icon": "⚙️", "desc": "Administration | 12-13 Day Window"},
+            "MGMT": {"title": "MANAGEMENT", "color": "#96CEB4", "icon": "📊", "desc": "Management | 14+ Day Window"},
+            "BAGGING": {"title": "BAGGING DEPARTMENT", "color": "#DDA0DD", "icon": "📦", "desc": "Bagging Operations"},
+            "OWNER": {"title": "OWNER", "color": "#FFD93D", "icon": "👑", "desc": "Full System Access"}
+        }
+        
+        current_dept = dept_info.get(user_role, {"title": f"{user_role} DEPARTMENT", "color": "#888888", "icon": "🏢", "desc": "Workshop Management System"})
+        
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {current_dept['color']}22, {current_dept['color']}44); 
+                    padding: 40px; border-radius: 20px; text-align: center; 
+                    border: 3px solid {current_dept['color']}; margin: 20px 0;">
+            <div style="font-size: 80px; margin-bottom: 10px;">{current_dept['icon']}</div>
+            <div style="font-size: 42px; font-weight: bold; color: {current_dept['color']}; 
+                        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);">
+                {current_dept['title']}
+            </div>
+            <div style="font-size: 18px; color: #666; margin-top: 15px;">
+                {current_dept['desc']}
+            </div>
+            <div style="font-size: 14px; color: #999; margin-top: 10px;">
+                Logged in as: <b>{user_role}</b> | {datetime.now().strftime('%d-%b-%Y %H:%M')}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.divider()
+        st.subheader("📊 Quick Overview")
+        
+        ghat_df = df.copy()
+        ghat_df['METAL_ISSUE_DT'] = pd.to_datetime(ghat_df[col_issue_dt], dayfirst=True, errors='coerce')
+        col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), 'DIA_ISSUE_DATE')
+        
+        mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \
+               (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
+        ghat_delay = ghat_df[mask].copy()
+        today = datetime.now()
+        ghat_delay['DELAY_DAYS'] = ghat_delay['METAL_ISSUE_DT'].apply(
+            lambda x: count_business_days(x, today) if pd.notna(x) else 0
+        )
+        ghat_delay = ghat_delay[ghat_delay['DELAY_DAYS'] >= 7]
+        
+        def is_followup(days): return days in [7, 8, 9]
+        def is_qc(days): return days in [10, 11]
+        def is_admin(days): return days in [12, 13]
+        def is_mgmt(days): return days >= 14
+        
+        window_counts = {
+            "FOLLOWUP": len(ghat_delay[ghat_delay['DELAY_DAYS'].apply(is_followup)]),
+            "QC": len(ghat_delay[ghat_delay['DELAY_DAYS'].apply(is_qc)]),
+            "ADMIN": len(ghat_delay[ghat_delay['DELAY_DAYS'].apply(is_admin)]),
+            "MGMT": len(ghat_delay[ghat_delay['DELAY_DAYS'].apply(is_mgmt)])
+        }
+        
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: st.metric("📋 Followup Items", window_counts["FOLLOWUP"])
+        with c2: st.metric("🔍 QC Items", window_counts["QC"])
+        with c3: st.metric("⚙️ Admin Items", window_counts["ADMIN"])
+        with c4: st.metric("📊 MGMT Items", window_counts["MGMT"])
+        
+        st.divider()
+        if user_role == "FOLLOWUP" and window_counts["FOLLOWUP"] > 0:
+            st.info(f"📋 You have **{window_counts['FOLLOWUP']}** items in your 7-9 day window. Go to **🚨 DELAY REPORTS → 🕒 Ghat Delay Report** to action them.")
+        elif user_role == "QC" and window_counts["QC"] > 0:
+            st.info(f"🔍 You have **{window_counts['QC']}** items in your 10-11 day window. Go to **🚨 DELAY REPORTS → 🕒 Ghat Delay Report** to action them.")
+        elif user_role == "ADMIN" and window_counts["ADMIN"] > 0:
+            st.info(f"⚙️ You have **{window_counts['ADMIN']}** items in your 12-13 day window. Go to **🚨 DELAY REPORTS → 🕒 Ghat Delay Report** to action them.")
+        elif user_role == "MGMT" and window_counts["MGMT"] > 0:
+            st.info(f"📊 You have **{window_counts['MGMT']}** items in the 14+ day window. Go to **🚨 DELAY REPORTS → 🕒 Ghat Delay Report** to action them.")
+        else:
+            st.success("✅ No pending GHAT delay items in your department window.")
+
     elif active_report == "🕒 Ghat Delay Report":
         st.header("🕒 Ghat Delay Report v2")
         st.info("Logic: Metal Issued +7 business days, Diamond Issue blank. Date-window department assignment.")
@@ -560,25 +638,20 @@ if df is not None:
         
         col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), 'DIA_ISSUE_DATE')
         
-        # Base filter: Metal Issued AND Diamond Issue blank
         mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \
                (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
         
         ghat_delay = ghat_df[mask].copy()
         today = datetime.now()
         
-        # Calculate business days delay (Mon-Sat, skip Sunday)
         ghat_delay['DELAY_DAYS'] = ghat_delay['METAL_ISSUE_DT'].apply(
             lambda x: count_business_days(x, today) if pd.notna(x) else 0
         )
         
-        # Only items >= 7 business days
         ghat_delay = ghat_delay[ghat_delay['DELAY_DAYS'] >= 7].sort_values('DELAY_DAYS', ascending=False)
         
-        # Get existing delay actions (manual assignments + closes)
         actions_df = get_delay_actions()
         
-        # Merge with actions to check for manual overrides
         if not actions_df.empty:
             actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
             actions_df = actions_df.rename(columns={'BAG_NO': col_bag})
@@ -592,54 +665,29 @@ if df is not None:
             ghat_delay['REMARKS'] = None
             ghat_delay['ACTION_DATE'] = None
         
-        # Determine which departments should see this item based on date windows (from Excel)
-        def is_followup(days):
-            return 7 <= days <= 9
+        def is_followup(days): return days in [7, 8, 9]
+        def is_qc(days): return days in [10, 11]
+        def is_admin(days): return days in [12, 13]
+        def is_mgmt(days): return days >= 14
         
-        def is_qc(days):
-            return 9 <= days <= 11
-        
-        def is_admin(days):
-            return 11 <= days <= 13
-        
-        def is_mgmt(days):
-            return days >= 14
-        
-        # Check if item is manually closed
         ghat_delay['IS_CLOSED'] = ghat_delay['STATUS'] == 'CLOSED'
         
-        # --- DEPARTMENT FILTERING ---
         if user_role == "FOLLOWUP":
-            final_ghat = ghat_delay[
-                (~ghat_delay['IS_CLOSED']) & 
-                (ghat_delay['DELAY_DAYS'].apply(is_followup))
-            ].copy()
+            final_ghat = ghat_delay[(~ghat_delay['IS_CLOSED']) & (ghat_delay['DELAY_DAYS'].apply(is_followup))].copy()
         elif user_role == "QC":
-            final_ghat = ghat_delay[
-                (~ghat_delay['IS_CLOSED']) & 
-                (ghat_delay['DELAY_DAYS'].apply(is_qc))
-            ].copy()
+            final_ghat = ghat_delay[(~ghat_delay['IS_CLOSED']) & (ghat_delay['DELAY_DAYS'].apply(is_qc))].copy()
         elif user_role == "ADMIN":
-            final_ghat = ghat_delay[
-                (~ghat_delay['IS_CLOSED']) & 
-                (ghat_delay['DELAY_DAYS'].apply(is_admin))
-            ].copy()
+            final_ghat = ghat_delay[(~ghat_delay['IS_CLOSED']) & (ghat_delay['DELAY_DAYS'].apply(is_admin))].copy()
         elif user_role == "MGMT":
-            final_ghat = ghat_delay[
-                (~ghat_delay['IS_CLOSED']) & 
-                (ghat_delay['DELAY_DAYS'].apply(is_mgmt))
-            ].copy()
+            final_ghat = ghat_delay[(~ghat_delay['IS_CLOSED']) & (ghat_delay['DELAY_DAYS'].apply(is_mgmt))].copy()
         elif user_role == "BAGGING":
-            # BAGGING only sees items manually assigned to BAGGING
             final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == 'BAGGING'].copy()
         elif user_role == "OWNER":
-            # OWNER sees all non-closed items
             final_ghat = ghat_delay[~ghat_delay['IS_CLOSED']].copy()
         else:
             final_ghat = ghat_delay.copy()
         
         if not final_ghat.empty:
-            # --- FILTERING OPTIONS (NO DATE RANGE) ---
             st.write("#### 🔍 Filter Results")
             f1, f2, f3 = st.columns(3)
             
@@ -654,7 +702,6 @@ if df is not None:
             if sel_karigar: final_ghat = final_ghat[final_ghat['KARIGAR'].astype(str).isin(sel_karigar)]
             if sel_otype: final_ghat = final_ghat[final_ghat[col_order_type].isin(sel_otype)]
 
-            # Store for download
             st.session_state['ghat_filtered_data'] = final_ghat.copy()
             st.session_state['ghat_filters'] = {
                 'customer': sel_cust,
@@ -662,7 +709,6 @@ if df is not None:
                 'order_type': sel_otype
             }
 
-            # Display Table
             cols = st.columns([1, 1, 1, 1, 0.8, 0.8, 1, 1.2, 1.5])
             headers = ["Customer", "Order Date", "Bag No", "Metal Issue", "Delay", "Window", "Karigar", "Status", "Design"]
             for col, text in zip(cols, headers): col.markdown(f"**{text}**")
@@ -676,19 +722,16 @@ if df is not None:
                 c4.write(clean_date(row[col_issue_dt]))
                 c5.write(f"🕒 {int(row['DELAY_DAYS'])} Days")
                 
-                # Show which window(s) this item falls into
                 days = row['DELAY_DAYS']
-                windows = []
-                if is_followup(days): windows.append("FOLLOWUP")
-                if is_qc(days): windows.append("QC")
-                if is_admin(days): windows.append("ADMIN")
-                if is_mgmt(days): windows.append("MGMT")
-                window_str = "/".join(windows)
+                if is_followup(days): window_str = "FOLLOWUP"
+                elif is_qc(days): window_str = "QC"
+                elif is_admin(days): window_str = "ADMIN"
+                elif is_mgmt(days): window_str = "MGMT"
+                else: window_str = "OTHER"
                 c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{window_str}</span>", unsafe_allow_html=True)
                 
                 c7.write(row.get('KARIGAR', '---'))
                 
-                # Show status
                 display_status = row.get('STATUS') if pd.notna(row.get('STATUS')) else 'DATE_TRIGGERED'
                 status_color = "green" if display_status == 'CLOSED' else "purple" if display_status == 'FORWARDED' else "blue"
                 c8.markdown(f"<span style='color:{status_color};'>{display_status}</span>", unsafe_allow_html=True)
@@ -704,9 +747,7 @@ if df is not None:
                 bag_no = row[col_bag]
                 current_status = row.get('STATUS')
                 
-                # Action panel using st.form for performance
                 with st.expander(f"📝 Actions for Bag {bag_no}"):
-                    # Show history
                     history = get_delay_history_cached(bag_no)
                     if not history.empty:
                         st.markdown("**📋 History Trail:**")
@@ -715,7 +756,6 @@ if df is not None:
                         st.divider()
                     
                     if current_status != 'CLOSED':
-                        # Forward / Close options inside form
                         with st.form(key=f"form_{bag_no}", clear_on_submit=True):
                             action_col1, action_col2 = st.columns(2)
                             
