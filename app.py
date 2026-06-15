@@ -522,63 +522,77 @@ if df is not None:
     elif active_report == "🕒 Ghat Delay Report":
         st.header("🕒 Ghat Delay Report v2")
         st.info("Logic: Metal Issued +7 business days, Diamond Issue blank. Auto-escalation: 2 business days per department.")
-
+        
         create_delay_tables()
-
+        
         ghat_df = df.copy()
         ghat_df['METAL_ISSUE_DT'] = pd.to_datetime(ghat_df[col_issue_dt], dayfirst=True, errors='coerce')
-
+        
         col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), 'DIA_ISSUE_DATE')
-
+        
+        # Base filter: Metal Issued AND Diamond Issue blank
         mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \
                (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
-
+        
         ghat_delay = ghat_df[mask].copy()
         today = datetime.now()
-
+        
+        # Calculate business days delay (Mon-Sat, skip Sunday)
         ghat_delay['DELAY_DAYS'] = ghat_delay['METAL_ISSUE_DT'].apply(
             lambda x: count_business_days(x, today) if pd.notna(x) else 0
         )
-
-        final_ghat = ghat_delay[ghat_delay['DELAY_DAYS'] > 7].sort_values('DELAY_DAYS', ascending=False)
-
+        
+        # v2: Items >7 business days delay (all departments except FOLLOWUP which sees 7-9)
+        ghat_delay = ghat_delay[ghat_delay['DELAY_DAYS'] > 7].sort_values('DELAY_DAYS', ascending=False)
+        
+        # Get existing delay actions
         actions_df = get_delay_actions()
-
+        
         if not actions_df.empty:
             actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
-            final_ghat = final_ghat.merge(actions_df[['BAG_NO', 'ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE']], 
+            ghat_delay = ghat_delay.merge(actions_df[['BAG_NO', 'ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE']], 
                                          on=col_bag, how='left')
-            final_ghat['ASSIGNED_TO'] = final_ghat['ASSIGNED_TO'].fillna('FOLLOWUP')
-            final_ghat['STATUS'] = final_ghat['STATUS'].fillna('OPEN')
+            ghat_delay['ASSIGNED_TO'] = ghat_delay['ASSIGNED_TO'].fillna('FOLLOWUP')
+            ghat_delay['STATUS'] = ghat_delay['STATUS'].fillna('OPEN')
         else:
-            final_ghat['ASSIGNED_TO'] = 'FOLLOWUP'
-            final_ghat['STATUS'] = 'OPEN'
-
-        auto_escalate_delays(final_ghat)
-
+            ghat_delay['ASSIGNED_TO'] = 'FOLLOWUP'
+            ghat_delay['STATUS'] = 'OPEN'
+        
+        # Auto-escalate
+        auto_escalate_delays(ghat_delay)
+        
+        # Re-fetch after auto-escalation
         actions_df = get_delay_actions()
         if not actions_df.empty:
             actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
-            final_ghat = final_ghat.drop(columns=['ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE'], errors='ignore')
-            final_ghat = final_ghat.merge(actions_df[['BAG_NO', 'ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE']], 
+            ghat_delay = ghat_delay.drop(columns=['ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE'], errors='ignore')
+            ghat_delay = ghat_delay.merge(actions_df[['BAG_NO', 'ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE']], 
                                          on=col_bag, how='left')
-            final_ghat['ASSIGNED_TO'] = final_ghat['ASSIGNED_TO'].fillna('FOLLOWUP')
-            final_ghat['STATUS'] = final_ghat['STATUS'].fillna('OPEN')
-
+            ghat_delay['ASSIGNED_TO'] = ghat_delay['ASSIGNED_TO'].fillna('FOLLOWUP')
+            ghat_delay['STATUS'] = ghat_delay['STATUS'].fillna('OPEN')
+        
+        # --- DEPARTMENT FILTERING ---
         ghat_access = user_perms.get("ghat_access", "ALL")
-        if ghat_access != "ALL":
-            final_ghat = final_ghat[final_ghat['ASSIGNED_TO'] == ghat_access]
-
-        if user_role in ["ADMIN", "MGMT", "OWNER"]:
-            st.write("#### 🔍 Department Filter")
-            dept_filter = st.selectbox("Filter by Department", ["ALL", "FOLLOWUP", "QC", "ADMIN", "MGMT", "BAGGING"])
-            if dept_filter != "ALL":
-                final_ghat = final_ghat[final_ghat['ASSIGNED_TO'] == dept_filter]
-
+        
+        if user_role == "FOLLOWUP":
+            # FOLLOWUP sees only items 7-9 business days (newly triggered, not yet escalated)
+            final_ghat = ghat_delay[
+                (ghat_delay['ASSIGNED_TO'] == 'FOLLOWUP') & 
+                (ghat_delay['DELAY_DAYS'] <= 9)
+            ].copy()
+        elif ghat_access != "ALL":
+            # QC, BAGGING see only their assigned items
+            final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == user_role].copy()
+        else:
+            # ADMIN, MGMT, OWNER see their own assigned items ONLY
+            # They do NOT see all items — only what is assigned to them
+            final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == user_role].copy()
+        
         if not final_ghat.empty:
+            # --- FILTERING OPTIONS ---
             st.write("#### 🔍 Filter Results")
             f1, f2, f3, f4 = st.columns(4)
-
+            
             with f1:
                 sel_cust = st.multiselect("Filter by Customer", sorted(final_ghat[col_cust].unique()))
             with f2:
@@ -601,6 +615,7 @@ if df is not None:
                 final_ghat = final_ghat[(final_ghat['METAL_ISSUE_DT'].dt.date >= date_range[0]) & 
                                       (final_ghat['METAL_ISSUE_DT'].dt.date <= date_range[1])]
 
+            # Store for download
             st.session_state['ghat_filtered_data'] = final_ghat.copy()
             st.session_state['ghat_filters'] = {
                 'customer': sel_cust,
@@ -609,6 +624,7 @@ if df is not None:
                 'date_range': date_range
             }
 
+            # Display Table
             cols = st.columns([1, 1, 1, 1, 0.8, 0.8, 1, 1.2, 1.5])
             headers = ["Customer", "Order Date", "Bag No", "Metal Issue", "Delay", "Assigned", "Karigar", "Status", "Design"]
             for col, text in zip(cols, headers): col.markdown(f"**{text}**")
@@ -623,10 +639,10 @@ if df is not None:
                 c5.write(f"🕒 {int(row['DELAY_DAYS'])} Days")
                 c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{row['ASSIGNED_TO']}</span>", unsafe_allow_html=True)
                 c7.write(row.get('KARIGAR', '---'))
-
+                
                 status_color = "green" if row['STATUS'] == 'CLOSED' else "orange" if row['STATUS'] == 'AUTO_ESCALATED' else "blue"
                 c8.markdown(f"<span style='color:{status_color};'>{row['STATUS']}</span>", unsafe_allow_html=True)
-
+                
                 img_url = row.get('IMAGE_LINK')
                 if img_url and str(img_url).strip() not in ["", "---", "None"]:
                     file_id = str(img_url).split("id=")[1].split("&")[0] if "id=" in str(img_url) else (str(img_url).split("d/")[1].split("/")[0] if "d/" in str(img_url) else None)
@@ -634,70 +650,55 @@ if df is not None:
                         thumb = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
                         c9.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                 st.divider()
-
+                
                 bag_no = row[col_bag]
                 current_assigned = row['ASSIGNED_TO']
                 current_status = row['STATUS']
-
-                can_act = False
-                if user_role in ["ADMIN", "OWNER"]:
-                    can_act = True
-                elif user_role == current_assigned and current_status != 'CLOSED':
-                    can_act = True
-                elif user_role == "MGMT" and current_status != 'CLOSED':
-                    can_act = True
-
-                if can_act and current_status != 'CLOSED':
-                    with st.expander(f"📝 Actions for Bag {bag_no}"):
-                        history = get_delay_history(bag_no)
-                        if not history.empty:
-                            st.markdown("**📋 History Trail:**")
-                            for _, h in history.iterrows():
-                                st.markdown(f"<small>{h['ACTION_DATE'].strftime('%d-%b-%Y %H:%M')} | **{h['FROM_DEPT']}** → **{h['TO_DEPT']}** | By: {h['ACTION_BY']} | {h['REMARKS']}</small>", unsafe_allow_html=True)
-                            st.divider()
-
-                        action_col1, action_col2 = st.columns(2)
-
-                        with action_col1:
-                            forward_options = []
-                            if current_assigned == "FOLLOWUP":
-                                forward_options = ["QC", "BAGGING", "CLOSE"]
-                            elif current_assigned == "QC":
-                                forward_options = ["ADMIN", "BAGGING", "CLOSE"]
-                            elif current_assigned == "ADMIN":
-                                forward_options = ["MGMT", "BAGGING", "CLOSE"]
-                            elif current_assigned == "MGMT":
-                                forward_options = ["BAGGING", "CLOSE"]
-                            elif user_role in ["ADMIN", "OWNER"]:
-                                forward_options = ["FOLLOWUP", "QC", "ADMIN", "MGMT", "BAGGING", "CLOSE"]
-
-                            if forward_options:
-                                new_assign = st.selectbox(f"Forward to", forward_options, key=f"fwd_{bag_no}")
-
-                        with action_col2:
-                            remarks = st.text_area("Remarks", key=f"rem_{bag_no}", height=68)
-
-                        if st.button("✅ Submit Action", key=f"submit_{bag_no}"):
-                            if new_assign == "CLOSE":
-                                upsert_delay_action(bag_no, current_assigned, 'CLOSED', remarks, user_role)
-                                insert_delay_history(bag_no, current_assigned, 'CLOSED', remarks, user_role)
-                                st.success(f"✅ Bag {bag_no} closed!")
-                            else:
-                                upsert_delay_action(bag_no, new_assign, 'FORWARDED', remarks, user_role)
-                                insert_delay_history(bag_no, current_assigned, new_assign, remarks, user_role)
-                                st.success(f"✅ Bag {bag_no} forwarded to {new_assign}!")
-                            st.rerun()
-
-                elif current_status == 'CLOSED':
-                    with st.expander(f"📋 View History for Bag {bag_no}"):
-                        history = get_delay_history(bag_no)
-                        if not history.empty:
-                            for _, h in history.iterrows():
-                                st.markdown(f"<small>{h['ACTION_DATE'].strftime('%d-%b-%Y %H:%M')} | **{h['FROM_DEPT']}** → **{h['TO_DEPT']}** | By: {h['ACTION_BY']} | {h['REMARKS']}</small>", unsafe_allow_html=True)
+                
+                # Action panel
+                with st.expander(f"📝 Actions for Bag {bag_no}"):
+                    # Show history
+                    history = get_delay_history_cached(bag_no)
+                    if not history.empty:
+                        st.markdown("**📋 History Trail:**")
+                        for _, h in history.iterrows():
+                            st.markdown(f"<small>{h['ACTION_DATE'].strftime('%d-%b-%Y %H:%M')} | **{h['FROM_DEPT']}** → **{h['TO_DEPT']}** | By: {h['ACTION_BY']} | {h['REMARKS']}</small>", unsafe_allow_html=True)
+                        st.divider()
+                    
+                    # Forward dropdown based on user role
+                    action_col1, action_col2 = st.columns(2)
+                    
+                    with action_col1:
+                        forward_options = []
+                        if user_role == "FOLLOWUP":
+                            forward_options = ["QC", "BAGGING", "ADMIN", "CLOSE"]
+                        elif user_role == "QC":
+                            forward_options = ["ADMIN", "BAGGING", "MGMT", "FOLLOWUP", "CLOSE"]
+                        elif user_role == "ADMIN":
+                            forward_options = ["MGMT", "FOLLOWUP", "QC", "BAGGING", "CLOSE"]
+                        elif user_role == "MGMT":
+                            forward_options = ["FOLLOWUP", "QC", "BAGGING", "ADMIN", "CLOSE"]
+                        elif user_role == "BAGGING":
+                            forward_options = ["FOLLOWUP", "CLOSE"]
+                        elif user_role in ["OWNER"]:
+                            forward_options = ["FOLLOWUP", "QC", "ADMIN", "MGMT", "BAGGING", "CLOSE"]
+                        
+                        new_assign = st.selectbox(f"Forward to", forward_options, key=f"fwd_{bag_no}")
+                    
+                    with action_col2:
+                        remarks = st.text_area("Remarks", key=f"rem_{bag_no}", height=68)
+                    
+                    if st.button("✅ Submit Action", key=f"submit_{bag_no}"):
+                        if new_assign == "CLOSE":
+                            upsert_delay_action(bag_no, current_assigned, 'CLOSED', remarks, user_role)
+                            insert_delay_history(bag_no, current_assigned, 'CLOSED', remarks, user_role)
                         else:
-                            st.info("No history available")
+                            upsert_delay_action(bag_no, new_assign, 'FORWARDED', remarks, user_role)
+                            insert_delay_history(bag_no, current_assigned, new_assign, remarks, user_role)
+                        st.success(f"✅ Bag {bag_no} {'closed' if new_assign == 'CLOSE' else 'forwarded to ' + new_assign}!")
+                        st.rerun()
         else:
-            st.success("✅ No Ghat delays detected.")
+            st.success("✅ No Ghat delays assigned to your department.")
 
     # --- DOWNLOAD CENTER ---
     elif active_report == "📄 Export GHAT Report":
