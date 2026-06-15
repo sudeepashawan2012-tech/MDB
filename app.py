@@ -636,9 +636,10 @@ if df is not None:
         elif user_role == "OWNER":
             # OWNER sees all non-closed items
             final_ghat = ghat_delay[~ghat_delay['IS_CLOSED']].copy()
-        else:
+                else:
             final_ghat = ghat_delay.copy()
-            
+        
+        if not final_ghat.empty:
             # --- FILTERING OPTIONS (NO DATE RANGE) ---
             st.write("#### 🔍 Filter Results")
             f1, f2, f3 = st.columns(3)
@@ -758,8 +759,7 @@ if df is not None:
                     else:
                         st.info("This bag is CLOSED. View history above.")
         else:
-            st.success("✅ No Ghat delays in your department window.")
-            # --- DOWNLOAD CENTER ---
+            st.success("✅ No Ghat delays in your department window.")            # --- DOWNLOAD CENTER ---
     elif active_report == "📄 Export GHAT Report":
         st.header("📄 Export GHAT Delay Report")
 
