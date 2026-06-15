@@ -441,9 +441,9 @@ if df is not None:
 
     if user_perms["can_view_reports"]:
         st.sidebar.markdown("### 📊 MAIN REPORTS")
-        menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Analytics"], label_visibility="collapsed")
+        menu = st.sidebar.radio("SELECT REPORT", ["🏢 Department Dashboard", "📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Analytics"], label_visibility="collapsed")
     else:
-        menu = "📊 Metal Requirements"
+        menu = "🏢 Department Dashboard"
 
     st.sidebar.markdown("### 🚨 DELAY REPORTS")
 
@@ -848,7 +848,127 @@ if df is not None:
             st.info("Please go to Ghat Delay Report and apply filters first, then return here to download.")
 
     # --- OTHER REPORTS (REST UNCHANGED) ---
+        elif active_report == "🏢 Department Dashboard":
+        st.header("🏢 Department Dashboard")
+        
+        # Department branding
+        dept_info = {
+            "FOLLOWUP": {
+                "title": "FOLLOWUP DEPARTMENT",
+                "color": "#FF6B35",
+                "icon": "📋",
+                "desc": "Track pending items | 7-9 Day Window"
+            },
+            "QC": {
+                "title": "QC DEPARTMENT", 
+                "color": "#4ECDC4",
+                "icon": "🔍",
+                "desc": "Quality Control | 10-11 Day Window"
+            },
+            "ADMIN": {
+                "title": "ADMIN DEPARTMENT",
+                "color": "#45B7D1", 
+                "icon": "⚙️",
+                "desc": "Administration | 12-13 Day Window"
+            },
+            "MGMT": {
+                "title": "MANAGEMENT",
+                "color": "#96CEB4",
+                "icon": "📊",
+                "desc": "Management | 14+ Day Window"
+            },
+            "BAGGING": {
+                "title": "BAGGING DEPARTMENT",
+                "color": "#DDA0DD",
+                "icon": "📦",
+                "desc": "Bagging Operations"
+            },
+            "OWNER": {
+                "title": "OWNER",
+                "color": "#FFD93D",
+                "icon": "👑",
+                "desc": "Full System Access"
+            }
+        }
+        
+        current_dept = dept_info.get(user_role, {
+            "title": f"{user_role} DEPARTMENT",
+            "color": "#888888",
+            "icon": "🏢",
+            "desc": "Workshop Management System"
+        })
+        
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {current_dept['color']}22, {current_dept['color']}44); 
+                    padding: 40px; border-radius: 20px; text-align: center; 
+                    border: 3px solid {current_dept['color']}; margin: 20px 0;">
+            <div style="font-size: 80px; margin-bottom: 10px;">{current_dept['icon']}</div>
+            <div style="font-size: 42px; font-weight: bold; color: {current_dept['color']}; 
+                        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);">
+                {current_dept['title']}
+            </div>
+            <div style="font-size: 18px; color: #666; margin-top: 15px;">
+                {current_dept['desc']}
+            </div>
+            <div style="font-size: 14px; color: #999; margin-top: 10px;">
+                Logged in as: <b>{user_role}</b> | {datetime.now().strftime('%d-%b-%Y %H:%M')}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Quick stats
+        st.divider()
+        st.subheader("📊 Quick Overview")
+        
+        ghat_df = df.copy()
+        ghat_df['METAL_ISSUE_DT'] = pd.to_datetime(ghat_df[col_issue_dt], dayfirst=True, errors='coerce')
+        col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), 'DIA_ISSUE_DATE')
+        
+        mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \
+               (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
+        ghat_delay = ghat_df[mask].copy()
+        today = datetime.now()
+        ghat_delay['DELAY_DAYS'] = ghat_delay['METAL_ISSUE_DT'].apply(
+            lambda x: count_business_days(x, today) if pd.notna(x) else 0
+        )
+        ghat_delay = ghat_delay[ghat_delay['DELAY_DAYS'] >= 7]
+        
+        def is_followup(days): return days in [7, 8, 9]
+        def is_qc(days): return days in [10, 11]
+        def is_admin(days): return days in [12, 13]
+        def is_mgmt(days): return days >= 14
+        
+        window_counts = {
+            "FOLLOWUP": len(ghat_delay[ghat_delay['DELAY_DAYS'].apply(is_followup)]),
+            "QC": len(ghat_delay[ghat_delay['DELAY_DAYS'].apply(is_qc)]),
+            "ADMIN": len(ghat_delay[ghat_delay['DELAY_DAYS'].apply(is_admin)]),
+            "MGMT": len(ghat_delay[ghat_delay['DELAY_DAYS'].apply(is_mgmt)])
+        }
+        
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("📋 Followup Items", window_counts["FOLLOWUP"])
+        with c2:
+            st.metric("🔍 QC Items", window_counts["QC"])
+        with c3:
+            st.metric("⚙️ Admin Items", window_counts["ADMIN"])
+        with c4:
+            st.metric("📊 MGMT Items", window_counts["MGMT"])
+        
+        st.divider()
+        if user_role == "FOLLOWUP" and window_counts["FOLLOWUP"] > 0:
+            st.info(f"📋 You have **{window_counts['FOLLOWUP']}** items in your 7-9 day window. Go to **🚨 DELAY REPORTS → 🕒 Ghat Delay Report** to action them.")
+        elif user_role == "QC" and window_counts["QC"] > 0:
+            st.info(f"🔍 You have **{window_counts['QC']}** items in your 10-11 day window. Go to **🚨 DELAY REPORTS → 🕒 Ghat Delay Report** to action them.")
+        elif user_role == "ADMIN" and window_counts["ADMIN"] > 0:
+            st.info(f"⚙️ You have **{window_counts['ADMIN']}** items in your 12-13 day window. Go to **🚨 DELAY REPORTS → 🕒 Ghat Delay Report** to action them.")
+        elif user_role == "MGMT" and window_counts["MGMT"] > 0:
+            st.info(f"📊 You have **{window_counts['MGMT']}** items in the 14+ day window. Go to **🚨 DELAY REPORTS → 🕒 Ghat Delay Report** to action them.")
+        else:
+            st.success("✅ No pending GHAT delay items in your department window.")
+
     elif active_report == "📊 Metal Requirements":
+        # KEEP THE ORIGINAL METAL REQUIREMENTS REPORT HERE
         st.header("📊 Metal Requirement Report")
         exclude = ["HOLD", "CANCEL"]
         mask = (df[col_issue_dt].isna() | (df[col_issue_dt].astype(str).str.strip() == "")) & (~df[col_status].isin(exclude))
@@ -863,14 +983,13 @@ if df is not None:
                 summary['Metal 18kt'] = summary['Metal 18kt'].apply(std_round)
                 summary['Dia Cts'] = summary['Dia Cts'].map('{:,.2f}'.format)
                 st.table(summary)
-
+                
                 t_bags = sub_data[col_bag].count()
                 t_metal = std_round(sub_data[col_metal].sum())
                 t_dia = sub_data[col_dia].sum()
                 st.markdown(f"**SUBTOTAL:** {t_bags} Bags | {t_metal}g 18kt | {t_dia:,.2f} Dia Cts")
             else:
                 st.info(f"No Metal Pending For {o_type.title()} Orders")
-
     elif active_report == "📋 CSR":
         st.header("📋 Customer Status Report")
         status_seq = {"SEQUENCE": 0, "ENGRAVING/HUID": 1, "IGI": 2, "ON HAND": 3, "FINAL QC": 4, "SETTING QC OK": 5, "SETTING": 6, "GHAT OK": 7, "CASTING": 8, "METAL ISSUED": 9, "METAL PENDING": 10, "HOLD": 12, "CANCEL": 13}
