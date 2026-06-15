@@ -321,7 +321,7 @@ def auto_escalate_delays(ghat_items_df):
 
 USER_ROLES = {
     "FOLLOWUP": {
-        "password": "followup123",
+        "password": "12345",
         "can_view_reports": True,
         "can_view_cad_delay": True,
         "ghat_access": "FOLLOWUP",
@@ -330,7 +330,7 @@ USER_ROLES = {
         "is_mgmt_viewonly": False
     },
     "QC": {
-        "password": "qc123",
+        "password": "12345",
         "can_view_reports": False,
         "can_view_cad_delay": False,
         "ghat_access": "QC",
@@ -339,7 +339,7 @@ USER_ROLES = {
         "is_mgmt_viewonly": False
     },
     "BAGGING": {
-        "password": "bagging123",
+        "password": "12345",
         "can_view_reports": False,
         "can_view_cad_delay": False,
         "ghat_access": "BAGGING",
@@ -348,7 +348,7 @@ USER_ROLES = {
         "is_mgmt_viewonly": False
     },
     "ADMIN": {
-        "password": "admin123",
+        "password": "12345",
         "can_view_reports": True,
         "can_view_cad_delay": True,
         "ghat_access": "ALL",
@@ -357,7 +357,7 @@ USER_ROLES = {
         "is_mgmt_viewonly": False
     },
     "MGMT": {
-        "password": "mgmt123",
+        "password": "12345",
         "can_view_reports": True,
         "can_view_cad_delay": True,
         "ghat_access": "ALL",
@@ -366,7 +366,7 @@ USER_ROLES = {
         "is_mgmt_viewonly": True
     },
     "OWNER": {
-        "password": "owner123",
+        "password": "12345",
         "can_view_reports": True,
         "can_view_cad_delay": True,
         "ghat_access": "ALL",
