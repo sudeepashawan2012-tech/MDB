@@ -244,21 +244,10 @@ def insert_delay_history(bag_no, from_dept, to_dept, remarks, action_by):
         return False
 
 def create_delay_tables():
-    """Create delay actions and history tables with explicit schema."""
-    drop_queries = [
-        "DROP TABLE IF EXISTS `jewelry-sql-system.workshop_data.delay_actions`",
-        "DROP TABLE IF EXISTS `jewelry-sql-system.workshop_data.delay_history`",
-        "DROP TABLE IF EXISTS `jewelry-sql-system.workshop_data.delay_report_snapshot`"
-    ]
-    for q in drop_queries:
-        try:
-            client.query(q).result()
-        except:
-            pass
-    
-    create_queries = [
+    """Create delay actions and history tables if they don't exist."""
+    queries = [
         """
-        CREATE TABLE `jewelry-sql-system.workshop_data.delay_actions` (
+        CREATE TABLE IF NOT EXISTS `jewelry-sql-system.workshop_data.delay_actions` (
             BAG_NO STRING NOT NULL,
             ASSIGNED_TO STRING,
             STATUS STRING,
@@ -269,7 +258,7 @@ def create_delay_tables():
         )
         """,
         """
-        CREATE TABLE `jewelry-sql-system.workshop_data.delay_history` (
+        CREATE TABLE IF NOT EXISTS `jewelry-sql-system.workshop_data.delay_history` (
             BAG_NO STRING NOT NULL,
             FROM_DEPT STRING,
             TO_DEPT STRING,
@@ -280,7 +269,7 @@ def create_delay_tables():
         )
         """,
         """
-        CREATE TABLE `jewelry-sql-system.workshop_data.delay_report_snapshot` (
+        CREATE TABLE IF NOT EXISTS `jewelry-sql-system.workshop_data.delay_report_snapshot` (
             BAG_NO STRING NOT NULL,
             CUSTOMER STRING,
             ORDER_DATE STRING,
@@ -292,46 +281,11 @@ def create_delay_tables():
         )
         """
     ]
-    for q in create_queries:
+    for q in queries:
         try:
             client.query(q).result()
         except Exception as e:
-            st.sidebar.error(f"Table creation error: {e}")
-
-def auto_escalate_delays(ghat_items_df):
-    """Auto-escalate items that have been at a department for >2 business days."""
-    actions_df = get_delay_actions()
-    if actions_df.empty:
-        return ghat_items_df
-    
-    today = datetime.now()
-    escalation_chain = {"FOLLOWUP": "QC", "QC": "ADMIN", "ADMIN": "MGMT", "MGMT": "MGMT"}
-    
-    for _, row in actions_df.iterrows():
-        bag_no = row['BAG_NO']
-        assigned_to = row['ASSIGNED_TO']
-        action_date = row['ACTION_DATE']
-        status = row.get('STATUS', 'OPEN')
-        
-        if status == 'CLOSED':
-            continue
-            
-        if pd.notna(action_date):
-            action_dt = pd.to_datetime(action_date)
-            biz_days = count_business_days(action_dt, today)
-            
-            if biz_days > 2 and assigned_to in escalation_chain:
-                new_assign = escalation_chain[assigned_to]
-                if new_assign != assigned_to:
-                    upsert_delay_action(
-                        bag_no, new_assign, 'AUTO_ESCALATED', 
-                        f'Auto-escalated from {assigned_to} after {biz_days} business days',
-                        'SYSTEM'
-                    )
-                    insert_delay_history(bag_no, assigned_to, new_assign, 
-                                        f'Auto-escalated after {biz_days} business days', 'SYSTEM')
-    
-    return ghat_items_df
+            pass
     
 # ========== ROLE-BASED LOGIN SYSTEM ==========
 
