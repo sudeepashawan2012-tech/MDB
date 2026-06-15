@@ -548,10 +548,10 @@ if df is not None:
         else:
             st.success("✅ No CAD delays found with current criteria.")
 
-            # --- GHAT DELAY REPORT v2 ---
+                # --- GHAT DELAY REPORT v2 ---
     elif active_report == "🕒 Ghat Delay Report":
         st.header("🕒 Ghat Delay Report v2")
-        st.info("Logic: Metal Issued +7 business days, Diamond Issue blank. Auto-escalation by date thresholds.")
+        st.info("Logic: Metal Issued +7 business days, Diamond Issue blank. Date-window department assignment.")
         
         create_delay_tables()
         
@@ -572,8 +572,8 @@ if df is not None:
             lambda x: count_business_days(x, today) if pd.notna(x) else 0
         )
         
-        # v2: Items >7 business days delay
-        ghat_delay = ghat_delay[ghat_delay['DELAY_DAYS'] > 7].sort_values('DELAY_DAYS', ascending=False)
+        # Only items >= 7 business days
+        ghat_delay = ghat_delay[ghat_delay['DELAY_DAYS'] >= 7].sort_values('DELAY_DAYS', ascending=False)
         
         # Get existing delay actions (manual assignments + closes)
         actions_df = get_delay_actions()
@@ -592,49 +592,49 @@ if df is not None:
             ghat_delay['REMARKS'] = None
             ghat_delay['ACTION_DATE'] = None
         
-        # Determine effective assignment based on date thresholds + manual overrides
-        def get_effective_assignment(row):
-            delay_days = row['DELAY_DAYS']
-            manual_status = row.get('STATUS')
-            manual_assign = row.get('ASSIGNED_TO')
-            
-            # If manually closed, stay closed
-            if manual_status == 'CLOSED':
-                return 'CLOSED'
-            
-            # If manually forwarded by a user (not SYSTEM auto-escalated), use that assignment
-            if pd.notna(manual_assign) and manual_assign not in ['FOLLOWUP', None] and manual_status == 'FORWARDED':
-                return manual_assign
-            
-            # Date-based auto-assignment
-            if 7 < delay_days <= 9:
-                return 'FOLLOWUP'
-            elif 9 < delay_days <= 11:
-                return 'QC'
-            elif 11 < delay_days <= 13:
-                return 'ADMIN'
-            elif delay_days > 13:
-                return 'MGMT'
-            else:
-                return 'FOLLOWUP'
+        # Determine which departments should see this item based on date windows (from Excel)
+        def is_followup(days):
+            return 7 <= days <= 9
         
-        ghat_delay['EFFECTIVE_ASSIGNED'] = ghat_delay.apply(get_effective_assignment, axis=1)
+        def is_qc(days):
+            return 9 <= days <= 11
         
-        # --- DEPARTMENT FILTERING BY EFFECTIVE ASSIGNMENT ---
+        def is_admin(days):
+            return 11 <= days <= 13
+        
+        def is_mgmt(days):
+            return days >= 14
+        
+        # Check if item is manually closed
+        ghat_delay['IS_CLOSED'] = ghat_delay['STATUS'] == 'CLOSED'
+        
+        # --- DEPARTMENT FILTERING ---
         if user_role == "FOLLOWUP":
-            final_ghat = ghat_delay[ghat_delay['EFFECTIVE_ASSIGNED'] == 'FOLLOWUP'].copy()
+            final_ghat = ghat_delay[
+                (~ghat_delay['IS_CLOSED']) & 
+                (ghat_delay['DELAY_DAYS'].apply(is_followup))
+            ].copy()
         elif user_role == "QC":
-            final_ghat = ghat_delay[ghat_delay['EFFECTIVE_ASSIGNED'] == 'QC'].copy()
+            final_ghat = ghat_delay[
+                (~ghat_delay['IS_CLOSED']) & 
+                (ghat_delay['DELAY_DAYS'].apply(is_qc))
+            ].copy()
         elif user_role == "ADMIN":
-            final_ghat = ghat_delay[ghat_delay['EFFECTIVE_ASSIGNED'] == 'ADMIN'].copy()
+            final_ghat = ghat_delay[
+                (~ghat_delay['IS_CLOSED']) & 
+                (ghat_delay['DELAY_DAYS'].apply(is_admin))
+            ].copy()
         elif user_role == "MGMT":
-            final_ghat = ghat_delay[ghat_delay['EFFECTIVE_ASSIGNED'] == 'MGMT'].copy()
+            final_ghat = ghat_delay[
+                (~ghat_delay['IS_CLOSED']) & 
+                (ghat_delay['DELAY_DAYS'].apply(is_mgmt))
+            ].copy()
         elif user_role == "BAGGING":
             # BAGGING only sees items manually assigned to BAGGING
             final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == 'BAGGING'].copy()
         elif user_role == "OWNER":
-            # OWNER sees everything
-            final_ghat = ghat_delay.copy()
+            # OWNER sees all non-closed items
+            final_ghat = ghat_delay[~ghat_delay['IS_CLOSED']].copy()
         else:
             final_ghat = ghat_delay.copy()
         
@@ -664,7 +664,7 @@ if df is not None:
 
             # Display Table
             cols = st.columns([1, 1, 1, 1, 0.8, 0.8, 1, 1.2, 1.5])
-            headers = ["Customer", "Order Date", "Bag No", "Metal Issue", "Delay", "Assigned", "Karigar", "Status", "Design"]
+            headers = ["Customer", "Order Date", "Bag No", "Metal Issue", "Delay", "Window", "Karigar", "Status", "Design"]
             for col, text in zip(cols, headers): col.markdown(f"**{text}**")
             st.divider()
 
@@ -675,10 +675,20 @@ if df is not None:
                 c3.write(f"**{row[col_bag]}**")
                 c4.write(clean_date(row[col_issue_dt]))
                 c5.write(f"🕒 {int(row['DELAY_DAYS'])} Days")
-                c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{row['EFFECTIVE_ASSIGNED']}</span>", unsafe_allow_html=True)
+                
+                # Show which window(s) this item falls into
+                days = row['DELAY_DAYS']
+                windows = []
+                if is_followup(days): windows.append("FOLLOWUP")
+                if is_qc(days): windows.append("QC")
+                if is_admin(days): windows.append("ADMIN")
+                if is_mgmt(days): windows.append("MGMT")
+                window_str = "/".join(windows)
+                c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{window_str}</span>", unsafe_allow_html=True)
+                
                 c7.write(row.get('KARIGAR', '---'))
                 
-                # Show status: CLOSED, FORWARDED, or date-based
+                # Show status
                 display_status = row.get('STATUS') if pd.notna(row.get('STATUS')) else 'DATE_TRIGGERED'
                 status_color = "green" if display_status == 'CLOSED' else "purple" if display_status == 'FORWARDED' else "blue"
                 c8.markdown(f"<span style='color:{status_color};'>{display_status}</span>", unsafe_allow_html=True)
@@ -692,7 +702,6 @@ if df is not None:
                 st.divider()
                 
                 bag_no = row[col_bag]
-                current_assigned = row['EFFECTIVE_ASSIGNED']
                 current_status = row.get('STATUS')
                 
                 # Action panel using st.form for performance
@@ -734,19 +743,19 @@ if df is not None:
                             
                             if submitted:
                                 if new_assign == "CLOSE":
-                                    upsert_delay_action(bag_no, current_assigned, 'CLOSED', remarks, user_role)
-                                    insert_delay_history(bag_no, current_assigned, 'CLOSED', remarks, user_role)
+                                    upsert_delay_action(bag_no, user_role, 'CLOSED', remarks, user_role)
+                                    insert_delay_history(bag_no, user_role, 'CLOSED', remarks, user_role)
                                     st.success(f"✅ Bag {bag_no} closed!")
                                 else:
                                     upsert_delay_action(bag_no, new_assign, 'FORWARDED', remarks, user_role)
-                                    insert_delay_history(bag_no, current_assigned, new_assign, remarks, user_role)
+                                    insert_delay_history(bag_no, user_role, new_assign, remarks, user_role)
                                     st.success(f"✅ Bag {bag_no} forwarded to {new_assign}!")
                                 st.rerun()
                     else:
                         st.info("This bag is CLOSED. View history above.")
         else:
-            st.success("✅ No Ghat delays assigned to your department.")
-    # --- DOWNLOAD CENTER ---
+            st.success("✅ No Ghat delays in your department window.")
+            # --- DOWNLOAD CENTER ---
     elif active_report == "📄 Export GHAT Report":
         st.header("📄 Export GHAT Delay Report")
 
