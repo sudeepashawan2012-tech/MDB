@@ -81,7 +81,16 @@ def clean_date(dt):
         if isinstance(dt, str): dt = pd.to_datetime(dt, dayfirst=True)
         return dt.strftime('%d-%b-%Y')
     except: return str(dt)
-
+def add_business_days(start_date, days):
+    """Add business days (Mon-Sat) to a date, skipping Sundays only."""
+    from datetime import timedelta
+    current = pd.to_datetime(start_date, dayfirst=True).date()
+    added = 0
+    while added < days:
+        current += timedelta(days=1)
+        if current.weekday() != 6:  # 6 = Sunday, skip it
+            added += 1
+    return current
 # ========== ROLE-BASED LOGIN SYSTEM ==========
 
 # Define users, passwords, and their permissions
