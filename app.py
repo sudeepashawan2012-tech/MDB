@@ -696,6 +696,10 @@ if df is not None:
                 current_assigned = row['ASSIGNED_TO']
                 current_status = row['STATUS']
 
+                bag_no = row[col_bag]
+                current_assigned = row['ASSIGNED_TO']
+                current_status = row['STATUS']
+                
                 # Action panel using st.form for performance (no re-runs on typing)
                 with st.expander(f"📝 Actions for Bag {bag_no}"):
                     # Show history
@@ -705,54 +709,46 @@ if df is not None:
                         for _, h in history.iterrows():
                             st.markdown(f"<small>{h['ACTION_DATE'].strftime('%d-%b-%Y %H:%M')} | **{h['FROM_DEPT']}** → **{h['TO_DEPT']}** | By: {h['ACTION_BY']} | {h['REMARKS']}</small>", unsafe_allow_html=True)
                         st.divider()
-
-                    # Forward / Close options inside form
-                    with st.form(key=f"form_{bag_no}", clear_on_submit=True):
-                        action_col1, action_col2 = st.columns(2)
-
-                        with action_col1:
-                            forward_options = []
-                            if user_role == "FOLLOWUP":
-                                forward_options = ["QC", "BAGGING", "ADMIN", "CLOSE"]
-                            elif user_role == "QC":
-                                forward_options = ["ADMIN", "BAGGING", "MGMT", "FOLLOWUP", "CLOSE"]
-                            elif user_role == "ADMIN":
-                                forward_options = ["MGMT", "FOLLOWUP", "QC", "BAGGING", "CLOSE"]
-                            elif user_role == "MGMT":
-                                forward_options = ["FOLLOWUP", "QC", "BAGGING", "ADMIN", "CLOSE"]
-                            elif user_role == "BAGGING":
-                                forward_options = ["FOLLOWUP", "CLOSE"]
-                            elif user_role == "OWNER":
-                                forward_options = ["FOLLOWUP", "QC", "ADMIN", "MGMT", "BAGGING", "CLOSE"]
-
-                            new_assign = st.selectbox(f"Forward to", forward_options, key=f"fwd_{bag_no}")
-
-                        with action_col2:
-                            remarks = st.text_area("Remarks", key=f"rem_{bag_no}", height=68)
-
-                        submitted = st.form_submit_button("✅ Submit Action")
-
-                        if submitted:
-                            if new_assign == "CLOSE":
-                                upsert_delay_action(bag_no, current_assigned, 'CLOSED', remarks, user_role)
-                                insert_delay_history(bag_no, current_assigned, 'CLOSED', remarks, user_role)
-                                st.success(f"✅ Bag {bag_no} closed!")
-                            else:
-                                upsert_delay_action(bag_no, new_assign, 'FORWARDED', remarks, user_role)
-                                insert_delay_history(bag_no, current_assigned, new_assign, remarks, user_role)
-                                st.success(f"✅ Bag {bag_no} forwarded to {new_assign}!")
-                            st.rerun()
-
-                elif current_status == 'CLOSED':
-                    with st.expander(f"📋 View History for Bag {bag_no}"):
-                        history = get_delay_history(bag_no)
-                        if not history.empty:
-                            for _, h in history.iterrows():
-                                st.markdown(f"<small>{h['ACTION_DATE'].strftime('%d-%b-%Y %H:%M')} | **{h['FROM_DEPT']}** → **{h['TO_DEPT']}** | By: {h['ACTION_BY']} | {h['REMARKS']}</small>", unsafe_allow_html=True)
-                        else:
-                            st.info("No history available")
-        else:
-            st.success("✅ No Ghat delays assigned to your department.")
+                    
+                    if current_status != 'CLOSED':
+                        # Forward / Close options inside form
+                        with st.form(key=f"form_{bag_no}", clear_on_submit=True):
+                            action_col1, action_col2 = st.columns(2)
+                            
+                            with action_col1:
+                                forward_options = []
+                                if user_role == "FOLLOWUP":
+                                    forward_options = ["QC", "BAGGING", "ADMIN", "CLOSE"]
+                                elif user_role == "QC":
+                                    forward_options = ["ADMIN", "BAGGING", "MGMT", "FOLLOWUP", "CLOSE"]
+                                elif user_role == "ADMIN":
+                                    forward_options = ["MGMT", "FOLLOWUP", "QC", "BAGGING", "CLOSE"]
+                                elif user_role == "MGMT":
+                                    forward_options = ["FOLLOWUP", "QC", "BAGGING", "ADMIN", "CLOSE"]
+                                elif user_role == "BAGGING":
+                                    forward_options = ["FOLLOWUP", "CLOSE"]
+                                elif user_role == "OWNER":
+                                    forward_options = ["FOLLOWUP", "QC", "ADMIN", "MGMT", "BAGGING", "CLOSE"]
+                                
+                                new_assign = st.selectbox(f"Forward to", forward_options, key=f"fwd_{bag_no}")
+                            
+                            with action_col2:
+                                remarks = st.text_area("Remarks", key=f"rem_{bag_no}", height=68)
+                            
+                            submitted = st.form_submit_button("✅ Submit Action")
+                            
+                            if submitted:
+                                if new_assign == "CLOSE":
+                                    upsert_delay_action(bag_no, current_assigned, 'CLOSED', remarks, user_role)
+                                    insert_delay_history(bag_no, current_assigned, 'CLOSED', remarks, user_role)
+                                    st.success(f"✅ Bag {bag_no} closed!")
+                                else:
+                                    upsert_delay_action(bag_no, new_assign, 'FORWARDED', remarks, user_role)
+                                    insert_delay_history(bag_no, current_assigned, new_assign, remarks, user_role)
+                                    st.success(f"✅ Bag {bag_no} forwarded to {new_assign}!")
+                                st.rerun()
+                    else:
+                        st.info("This bag is CLOSED. View history above.")
 
     # --- DOWNLOAD CENTER ---
     elif active_report == "📄 Export GHAT Report":
