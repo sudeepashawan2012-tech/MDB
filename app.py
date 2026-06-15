@@ -1,10 +1,4 @@
-
-# I need to fix SQL injection vulnerabilities. Let me rewrite the complete code with parameterized queries.
-# The key issue: using f-strings with user input in BigQuery MERGE/INSERT statements.
-# BigQuery supports query parameters for values but NOT for table/column names.
-# For table names, we use fixed strings. For user values, we use query parameters.
-
-complete_code_v2 = '''import streamlit as st
+import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
 from google.oauth2 import service_account
@@ -36,13 +30,13 @@ def refresh_native_tables():
         queries = [
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.master_inventory_native` 
                AS SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`""",
-            
+
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.SALE_DATA_native` 
                AS SELECT * FROM `jewelry-sql-system.workshop_data.SALE_DATA`""",
-            
+
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.pre_finish_movement_native` 
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement`""",
-            
+
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.post_finish_movement_native` 
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement`"""
         ]
@@ -137,7 +131,7 @@ def upsert_delay_action(bag_no, assigned_to, status, remarks, action_by, action_
     """Insert or update a delay action record using parameterized queries."""
     if action_date is None:
         action_date = datetime.now()
-    
+
     # Use parameterized query to prevent SQL injection
     query = """
     MERGE `jewelry-sql-system.workshop_data.delay_actions` T
@@ -154,7 +148,7 @@ def upsert_delay_action(bag_no, assigned_to, status, remarks, action_by, action_
       INSERT (BAG_NO, ASSIGNED_TO, STATUS, REMARKS, ACTION_BY, ACTION_DATE)
       VALUES (@bag_no, @assigned_to, @status, @remarks, @action_by, @action_date)
     """
-    
+
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no)),
@@ -165,7 +159,7 @@ def upsert_delay_action(bag_no, assigned_to, status, remarks, action_by, action_
             bigquery.ScalarQueryParameter("action_date", "TIMESTAMP", action_date),
         ]
     )
-    
+
     try:
         client.query(query, job_config=job_config).result()
         return True
@@ -181,7 +175,7 @@ def insert_delay_history(bag_no, from_dept, to_dept, remarks, action_by):
     (BAG_NO, FROM_DEPT, TO_DEPT, REMARKS, ACTION_BY, ACTION_DATE)
     VALUES (@bag_no, @from_dept, @to_dept, @remarks, @action_by, @action_date)
     """
-    
+
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no)),
@@ -192,7 +186,7 @@ def insert_delay_history(bag_no, from_dept, to_dept, remarks, action_by):
             bigquery.ScalarQueryParameter("action_date", "TIMESTAMP", action_date),
         ]
     )
-    
+
     try:
         client.query(query, job_config=job_config).result()
         return True
@@ -266,23 +260,23 @@ def auto_escalate_delays(ghat_items_df):
     actions_df = get_delay_actions()
     if actions_df.empty:
         return ghat_items_df
-    
+
     today = datetime.now()
     escalation_chain = {"FOLLOWUP": "QC", "QC": "ADMIN", "ADMIN": "MGMT", "MGMT": "MGMT"}
-    
+
     for _, row in actions_df.iterrows():
         bag_no = row['BAG_NO']
         assigned_to = row['ASSIGNED_TO']
         action_date = row['ACTION_DATE']
         status = row.get('STATUS', 'OPEN')
-        
+
         if status == 'CLOSED':
             continue
-            
+
         if pd.notna(action_date):
             action_dt = pd.to_datetime(action_date)
             biz_days = count_business_days(action_dt, today)
-            
+
             if biz_days > 2 and assigned_to in escalation_chain:
                 new_assign = escalation_chain[assigned_to]
                 if new_assign != assigned_to:
@@ -293,7 +287,7 @@ def auto_escalate_delays(ghat_items_df):
                     )
                     insert_delay_history(bag_no, assigned_to, new_assign, 
                                         f'Auto-escalated after {biz_days} business days', 'SYSTEM')
-    
+
     return ghat_items_df
 
 # ========== ROLE-BASED LOGIN SYSTEM ==========
@@ -358,23 +352,23 @@ USER_ROLES = {
 # Login screen
 if "user_role" not in st.session_state:
     st.title("🔒 Workshop Login")
-    
+
     selected_role = st.session_state.get("_selected_role", None)
-    
+
     if not selected_role:
         cols = st.columns(3)
         role_names = list(USER_ROLES.keys())
-        
+
         for idx, role in enumerate(role_names):
             with cols[idx % 3]:
                 if st.button(f"🔑 {role}", use_container_width=True, key=f"role_{role}"):
                     st.session_state["_selected_role"] = role
                     st.rerun()
-    
+
     if selected_role:
         st.markdown(f"### Enter password for **{selected_role}**")
         pwd = st.text_input("Password", type="password", key="pwd_input")
-        
+
         col1, col2 = st.columns([1, 3])
         with col1:
             if st.button("🔙 Back"):
@@ -388,7 +382,7 @@ if "user_role" not in st.session_state:
                     st.rerun()
                 else:
                     st.error("❌ Wrong password")
-    
+
     st.stop()
 
 # --- USER IS LOGGED IN ---
@@ -417,7 +411,7 @@ if df is not None:
     df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
     # --- SIDEBAR NAVIGATION (ROLE-BASED) ---
-    
+
     if user_perms["can_view_reports"]:
         st.sidebar.markdown("### 📊 MAIN REPORTS")
         menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Analytics"], label_visibility="collapsed")
@@ -425,12 +419,12 @@ if df is not None:
         menu = "📊 Metal Requirements"
 
     st.sidebar.markdown("### 🚨 DELAY REPORTS")
-    
+
     if user_perms["can_view_cad_delay"]:
         delay_options = ["None", "🕒 CAD Delay Report", "🕒 Ghat Delay Report"]
     else:
         delay_options = ["None", "🕒 Ghat Delay Report"]
-    
+
     delay_menu = st.sidebar.radio("SELECT DELAY REPORT", delay_options, label_visibility="collapsed")
 
     if user_perms["can_download"]:
@@ -454,24 +448,24 @@ if df is not None:
     if active_report == "🕒 CAD Delay Report":
         st.header("🕒 CAD Delay Report (Stock Orders)")
         st.info("Stock Orders: CAD is pending (> 5 days) AND Metal Issue is pending.")
-        
+
         cad_df = df.copy()
         cad_df['ORDER_DATE_DT'] = pd.to_datetime(cad_df['ORDER_DATE'], dayfirst=True, errors='coerce')
-        
-        mask = (cad_df[col_order_type].str.contains("STOCK", case=False, na=False)) & \\
-               (cad_df['CAD'].isna() | (cad_df['CAD'].astype(str).str.strip() == "")) & \\
+
+        mask = (cad_df[col_order_type].str.contains("STOCK", case=False, na=False)) & \
+               (cad_df['CAD'].isna() | (cad_df['CAD'].astype(str).str.strip() == "")) & \
                (cad_df[col_issue_dt].isna() | (cad_df[col_issue_dt].astype(str).str.strip() == ""))
-        
+
         delay_data = cad_df[mask].copy()
         today = datetime.now()
         delay_data['CAD_DELAY'] = (today - delay_data['ORDER_DATE_DT']).dt.days
-        
+
         final_delay = delay_data[delay_data['CAD_DELAY'] > 5].sort_values('CAD_DELAY', ascending=False)
-        
+
         if not final_delay.empty:
             st.write("#### 🔍 Filter Results")
             f1, f2, f3 = st.columns(3)
-            
+
             with f1:
                 sel_cust = st.multiselect("Filter by Customer", sorted(final_delay[col_cust].unique()))
             with f2:
@@ -510,13 +504,13 @@ if df is not None:
                 c4.write(row[col_order_type])
                 c5.write(f"⚠️ {int(row['CAD_DELAY'])} Days")
                 c6.write(row.get('KARIGAR', '---'))
-                
+
                 img_url = row.get('IMAGE_LINK')
                 if img_url and str(img_url).strip() not in ["", "---", "None"]:
                     file_id = None
                     if "id=" in str(img_url): file_id = str(img_url).split("id=")[1].split("&")[0]
                     elif "d/" in str(img_url): file_id = str(img_url).split("d/")[1].split("/")[0]
-                    
+
                     if file_id:
                         thumb_url = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
                         c7.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
@@ -531,28 +525,28 @@ if df is not None:
     elif active_report == "🕒 Ghat Delay Report":
         st.header("🕒 Ghat Delay Report v2")
         st.info("Logic: Metal Issued +7 business days, Diamond Issue blank. Auto-escalation: 2 business days per department.")
-        
+
         create_delay_tables()
-        
+
         ghat_df = df.copy()
         ghat_df['METAL_ISSUE_DT'] = pd.to_datetime(ghat_df[col_issue_dt], dayfirst=True, errors='coerce')
-        
+
         col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), 'DIA_ISSUE_DATE')
-        
-        mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \\
+
+        mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \
                (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
-        
+
         ghat_delay = ghat_df[mask].copy()
         today = datetime.now()
-        
+
         ghat_delay['DELAY_DAYS'] = ghat_delay['METAL_ISSUE_DT'].apply(
             lambda x: count_business_days(x, today) if pd.notna(x) else 0
         )
-        
+
         final_ghat = ghat_delay[ghat_delay['DELAY_DAYS'] > 7].sort_values('DELAY_DAYS', ascending=False)
-        
+
         actions_df = get_delay_actions()
-        
+
         if not actions_df.empty:
             actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
             final_ghat = final_ghat.merge(actions_df[['BAG_NO', 'ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE']], 
@@ -562,9 +556,9 @@ if df is not None:
         else:
             final_ghat['ASSIGNED_TO'] = 'FOLLOWUP'
             final_ghat['STATUS'] = 'OPEN'
-        
+
         auto_escalate_delays(final_ghat)
-        
+
         actions_df = get_delay_actions()
         if not actions_df.empty:
             actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
@@ -573,21 +567,21 @@ if df is not None:
                                          on=col_bag, how='left')
             final_ghat['ASSIGNED_TO'] = final_ghat['ASSIGNED_TO'].fillna('FOLLOWUP')
             final_ghat['STATUS'] = final_ghat['STATUS'].fillna('OPEN')
-        
+
         ghat_access = user_perms.get("ghat_access", "ALL")
         if ghat_access != "ALL":
             final_ghat = final_ghat[final_ghat['ASSIGNED_TO'] == ghat_access]
-        
+
         if user_role in ["ADMIN", "MGMT", "OWNER"]:
             st.write("#### 🔍 Department Filter")
             dept_filter = st.selectbox("Filter by Department", ["ALL", "FOLLOWUP", "QC", "ADMIN", "MGMT", "BAGGING"])
             if dept_filter != "ALL":
                 final_ghat = final_ghat[final_ghat['ASSIGNED_TO'] == dept_filter]
-        
+
         if not final_ghat.empty:
             st.write("#### 🔍 Filter Results")
             f1, f2, f3, f4 = st.columns(4)
-            
+
             with f1:
                 sel_cust = st.multiselect("Filter by Customer", sorted(final_ghat[col_cust].unique()))
             with f2:
@@ -632,10 +626,10 @@ if df is not None:
                 c5.write(f"🕒 {int(row['DELAY_DAYS'])} Days")
                 c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{row['ASSIGNED_TO']}</span>", unsafe_allow_html=True)
                 c7.write(row.get('KARIGAR', '---'))
-                
+
                 status_color = "green" if row['STATUS'] == 'CLOSED' else "orange" if row['STATUS'] == 'AUTO_ESCALATED' else "blue"
                 c8.markdown(f"<span style='color:{status_color};'>{row['STATUS']}</span>", unsafe_allow_html=True)
-                
+
                 img_url = row.get('IMAGE_LINK')
                 if img_url and str(img_url).strip() not in ["", "---", "None"]:
                     file_id = str(img_url).split("id=")[1].split("&")[0] if "id=" in str(img_url) else (str(img_url).split("d/")[1].split("/")[0] if "d/" in str(img_url) else None)
@@ -643,11 +637,11 @@ if df is not None:
                         thumb = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
                         c9.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                 st.divider()
-                
+
                 bag_no = row[col_bag]
                 current_assigned = row['ASSIGNED_TO']
                 current_status = row['STATUS']
-                
+
                 can_act = False
                 if user_role in ["ADMIN", "OWNER"]:
                     can_act = True
@@ -655,7 +649,7 @@ if df is not None:
                     can_act = True
                 elif user_role == "MGMT" and current_status != 'CLOSED':
                     can_act = True
-                
+
                 if can_act and current_status != 'CLOSED':
                     with st.expander(f"📝 Actions for Bag {bag_no}"):
                         history = get_delay_history(bag_no)
@@ -664,9 +658,9 @@ if df is not None:
                             for _, h in history.iterrows():
                                 st.markdown(f"<small>{h['ACTION_DATE'].strftime('%d-%b-%Y %H:%M')} | **{h['FROM_DEPT']}** → **{h['TO_DEPT']}** | By: {h['ACTION_BY']} | {h['REMARKS']}</small>", unsafe_allow_html=True)
                             st.divider()
-                        
+
                         action_col1, action_col2 = st.columns(2)
-                        
+
                         with action_col1:
                             forward_options = []
                             if current_assigned == "FOLLOWUP":
@@ -679,13 +673,13 @@ if df is not None:
                                 forward_options = ["BAGGING", "CLOSE"]
                             elif user_role in ["ADMIN", "OWNER"]:
                                 forward_options = ["FOLLOWUP", "QC", "ADMIN", "MGMT", "BAGGING", "CLOSE"]
-                            
+
                             if forward_options:
                                 new_assign = st.selectbox(f"Forward to", forward_options, key=f"fwd_{bag_no}")
-                        
+
                         with action_col2:
                             remarks = st.text_area("Remarks", key=f"rem_{bag_no}", height=68)
-                        
+
                         if st.button("✅ Submit Action", key=f"submit_{bag_no}"):
                             if new_assign == "CLOSE":
                                 upsert_delay_action(bag_no, current_assigned, 'CLOSED', remarks, user_role)
@@ -696,7 +690,7 @@ if df is not None:
                                 insert_delay_history(bag_no, current_assigned, new_assign, remarks, user_role)
                                 st.success(f"✅ Bag {bag_no} forwarded to {new_assign}!")
                             st.rerun()
-                
+
                 elif current_status == 'CLOSED':
                     with st.expander(f"📋 View History for Bag {bag_no}"):
                         history = get_delay_history(bag_no)
@@ -711,13 +705,13 @@ if df is not None:
     # --- DOWNLOAD CENTER ---
     elif active_report == "📄 Export GHAT Report":
         st.header("📄 Export GHAT Delay Report")
-        
+
         if 'ghat_filtered_data' in st.session_state and not st.session_state['ghat_filtered_data'].empty:
             export_df = st.session_state['ghat_filtered_data'].copy()
-            
+
             export_cols = [col_cust, 'ORDER_DATE', col_bag, col_issue_dt, 'DELAY_DAYS', 'ASSIGNED_TO', 'STATUS', 'KARIGAR']
             export_cols = [c for c in export_cols if c in export_df.columns]
-            
+
             history_data = []
             for bag in export_df[col_bag].unique():
                 hist = get_delay_history(bag)
@@ -727,18 +721,18 @@ if df is not None:
                         for _, h in hist.iterrows()
                     ])
                     history_data.append({'BAG_NO': bag, 'HISTORY': hist_str})
-            
+
             if history_data:
                 hist_df = pd.DataFrame(history_data)
                 export_df = export_df.merge(hist_df, on=col_bag, how='left')
                 export_df['HISTORY'] = export_df['HISTORY'].fillna('No history')
             else:
                 export_df['HISTORY'] = 'No history'
-            
+
             # PDF Generation
             try:
                 from fpdf import FPDF
-                
+
                 class PDF(FPDF):
                     def header(self):
                         self.set_font('Arial', 'B', 14)
@@ -749,23 +743,23 @@ if df is not None:
                         filter_str = f"Customer: {filters.get('customer', 'All')} | Karigar: {filters.get('karigar', 'All')} | Type: {filters.get('order_type', 'All')}"
                         self.cell(0, 5, filter_str[:120], 0, 1, 'C')
                         self.ln(5)
-                    
+
                     def footer(self):
                         self.set_y(-15)
                         self.set_font('Arial', 'I', 8)
                         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
-                
+
                 pdf = PDF()
                 pdf.add_page()
                 pdf.set_font('Arial', 'B', 9)
-                
+
                 headers = ['Customer', 'Bag No', 'Metal Issue', 'Delay', 'Assigned', 'Status', 'History']
                 col_widths = [30, 25, 25, 15, 25, 25, 55]
-                
+
                 for h, w in zip(headers, col_widths):
                     pdf.cell(w, 8, h, 1, 0, 'C')
                 pdf.ln()
-                
+
                 pdf.set_font('Arial', '', 8)
                 for _, row in export_df.iterrows():
                     pdf.cell(30, 6, str(row.get(col_cust, ''))[:20], 1)
@@ -776,9 +770,9 @@ if df is not None:
                     pdf.cell(25, 6, str(row.get('STATUS', '')), 1)
                     pdf.cell(55, 6, str(row.get('HISTORY', ''))[:40], 1)
                     pdf.ln()
-                
+
                 pdf_output = pdf.output(dest='S').encode('latin1')
-                
+
                 st.download_button(
                     label="📥 Download PDF",
                     data=pdf_output,
@@ -789,7 +783,7 @@ if df is not None:
                 st.error("fpdf module not available. Please add 'fpdf' to requirements.txt")
             except Exception as e:
                 st.error(f"PDF Generation Error: {e}")
-            
+
             csv = export_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="📥 Download CSV",
@@ -816,7 +810,7 @@ if df is not None:
                 summary['Metal 18kt'] = summary['Metal 18kt'].apply(std_round)
                 summary['Dia Cts'] = summary['Dia Cts'].map('{:,.2f}'.format)
                 st.table(summary)
-                
+
                 t_bags = sub_data[col_bag].count()
                 t_metal = std_round(sub_data[col_metal].sum())
                 t_dia = sub_data[col_dia].sum()
@@ -833,18 +827,18 @@ if df is not None:
             with st.expander(f"👤 CUSTOMER: {cust}"):
                 cust_data = csr_df[csr_df[col_cust] == cust]
                 summary = cust_data.groupby([col_status, 'Seq']).agg({col_bag: 'count', col_metal: 'sum', col_dia: 'sum'}).reset_index().sort_values('Seq')
-                
+
                 total_row = pd.DataFrame([{
                     col_status: 'TOTAL',
                     col_bag: summary[col_bag].sum(),
                     col_metal: summary[col_metal].sum(),
                     col_dia: summary[col_dia].sum()
                 }])
-                
+
                 final_summary = pd.concat([summary, total_row], ignore_index=True)
                 final_summary['Metal 18kt'] = final_summary[col_metal].apply(std_round)
                 final_summary['Dia Cts'] = final_summary[col_dia].map('{:,.2f}'.format)
-                
+
                 st.dataframe(final_summary[[col_status, col_bag, 'Metal 18kt', 'Dia Cts']].rename(columns={col_status: 'Status', col_bag: 'Bag Qty'}), hide_index=True, use_container_width=True)
 
     elif active_report == "📋 Scope of Work":
@@ -852,7 +846,7 @@ if df is not None:
         issued_mask = df[col_issue_dt].notna() & (df[col_issue_dt].astype(str).str.strip() != "")
         is_cust = df[col_order_type].str.contains("CUSTOMER", case=False, na=False)
         is_stock = df[col_order_type].str.contains("STOCK", case=False, na=False)
-        
+
         def get_report_table(data):
             if data.empty: return None
             grp = data.groupby(col_cust).agg({col_bag: 'count', col_metal: 'sum', col_dia: 'sum'}).reset_index()
@@ -884,7 +878,7 @@ if df is not None:
     elif active_report == "🔍 Bag History Report":
         st.header("🔍 Bag History Report")
         search_bag = st.text_input("Enter Bag Number to Search").strip()
-        
+
         if search_bag:
             match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
             if not match.empty:
@@ -904,7 +898,7 @@ if df is not None:
                         st.write(f"**Metal Iss:** {clean_date(r.get(col_issue_dt))}")
                         st.write(f"**Deliv Dt:** {clean_date(r.get('DELIVERY_DATE'))}")
                         st.write(f"**Status:** {r.get(col_status, 'N/A')}")
-                
+
                 with col_img:
                     st.markdown("### 🖼️ Design")
                     img_url = r.get('IMAGE_LINK')
@@ -917,10 +911,10 @@ if df is not None:
                             st.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="100%" style="border-radius:10px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                             st.caption("👆 Click to enlarge")
                     else: st.info("No Image")
-                
+
                 st.divider()
                 st.header("📋 QC Process Report")
-                
+
                 def get_val_flex(prefix):
                     col = next((c for c in match.columns if c.startswith(prefix)), None)
                     if col:
@@ -1021,11 +1015,11 @@ if df is not None:
     elif menu == "💰 Sales Analytics":
         st.header("💎 Sales Analytics")
         sdf = fetch_sales_data()
-        
+
         if sdf is not None:
             try:
                 import plotly.express as px
-                
+
                 s_report = pd.DataFrame({
                     'Customer': sdf.iloc[:, 0].astype(str).str.strip(),
                     'Karigar': sdf.iloc[:, 9].astype(str).str.strip(),
@@ -1040,10 +1034,10 @@ if df is not None:
                 if not s_report.empty:
                     s_report['Month'] = s_report['Date'].dt.strftime('%B')
                     month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-                    
+
                     st.subheader("👥 Customer Sales (Month-wise)")
                     cust_data = s_report.groupby(['Month', 'Customer'], observed=True)['Dia_Cts'].sum().reset_index()
-                    
+
                     fig_cust = px.bar(
                         cust_data, 
                         x="Month", 
@@ -1062,7 +1056,7 @@ if df is not None:
 
                     st.subheader("⚒️ Karigar Production (Month-wise)")
                     karigar_data = s_report.groupby(['Month', 'Karigar'], observed=True)['Dia_Cts'].sum().reset_index()
-                    
+
                     fig_kari = px.bar(
                         karigar_data, 
                         x="Month", 
@@ -1097,19 +1091,3 @@ if df is not None:
                 st.error("Missing 'plotly' module. Please add it to requirements.txt.")
             except Exception as e:
                 st.error(f"Analytics Error: {e}")
-'''
-
-# Save to file
-with open('/mnt/agents/output/mdb_app_complete_v2.py', 'w') as f:
-    f.write(complete_code_v2)
-
-print(f"File saved. Length: {len(complete_code_v2)} characters")
-print("Key changes made:")
-print("1. SQL injection fixed - using BigQuery parameterized queries (@param) with QueryJobConfig")
-print("2. GHAT v2: 7 business days trigger (replaced old 5/9 split)")
-print("3. 5 department views with role-based filtering")
-print("4. Forward assignment dropdown with remarks")
-print("5. Auto-escalation: 2 business days per stage")
-print("6. Full history trail visible to all departments")
-print("7. Download Center: PDF + CSV with filters + history")
-print("8. Existing reports unchanged")
