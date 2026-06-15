@@ -212,11 +212,23 @@ def get_delay_history(bag_no):
         return pd.DataFrame()
 
 def create_delay_tables():
-    """Create delay actions and history tables if they don't exist."""
-    queries = [
+    """Create delay actions and history tables with explicit schema."""
+    # Drop and recreate to ensure proper schema
+    drop_queries = [
+        "DROP TABLE IF EXISTS `jewelry-sql-system.workshop_data.delay_actions`",
+        "DROP TABLE IF EXISTS `jewelry-sql-system.workshop_data.delay_history`",
+        "DROP TABLE IF EXISTS `jewelry-sql-system.workshop_data.delay_report_snapshot`"
+    ]
+    for q in drop_queries:
+        try:
+            client.query(q).result()
+        except:
+            pass
+    
+    create_queries = [
         """
-        CREATE TABLE IF NOT EXISTS `jewelry-sql-system.workshop_data.delay_actions` (
-            BAG_NO STRING,
+        CREATE TABLE `jewelry-sql-system.workshop_data.delay_actions` (
+            BAG_NO STRING NOT NULL,
             ASSIGNED_TO STRING,
             STATUS STRING,
             REMARKS STRING,
@@ -226,8 +238,8 @@ def create_delay_tables():
         )
         """,
         """
-        CREATE TABLE IF NOT EXISTS `jewelry-sql-system.workshop_data.delay_history` (
-            BAG_NO STRING,
+        CREATE TABLE `jewelry-sql-system.workshop_data.delay_history` (
+            BAG_NO STRING NOT NULL,
             FROM_DEPT STRING,
             TO_DEPT STRING,
             REMARKS STRING,
@@ -237,8 +249,8 @@ def create_delay_tables():
         )
         """,
         """
-        CREATE TABLE IF NOT EXISTS `jewelry-sql-system.workshop_data.delay_report_snapshot` (
-            BAG_NO STRING,
+        CREATE TABLE `jewelry-sql-system.workshop_data.delay_report_snapshot` (
+            BAG_NO STRING NOT NULL,
             CUSTOMER STRING,
             ORDER_DATE STRING,
             METAL_ISSUE_DATE STRING,
@@ -249,11 +261,11 @@ def create_delay_tables():
         )
         """
     ]
-    for q in queries:
+    for q in create_queries:
         try:
             client.query(q).result()
         except Exception as e:
-            pass
+            st.sidebar.error(f"Table creation error: {e}")
 
 def auto_escalate_delays(ghat_items_df):
     """Auto-escalate items that have been at a department for >2 business days."""
