@@ -593,15 +593,14 @@ if df is not None:
             ghat_delay['ACTION_DATE'] = None
         
         # Determine which departments should see this item based on date windows (from Excel)
-                # Determine which departments should see this item based on date windows
         def is_followup(days):
-            return days in [7, 8, 9]
+            return 7 <= days <= 9
         
         def is_qc(days):
-            return days in [10, 11]
+            return 9 <= days <= 11
         
         def is_admin(days):
-            return days in [12, 13]
+            return 11 <= days <= 13
         
         def is_mgmt(days):
             return days >= 14
@@ -636,7 +635,7 @@ if df is not None:
         elif user_role == "OWNER":
             # OWNER sees all non-closed items
             final_ghat = ghat_delay[~ghat_delay['IS_CLOSED']].copy()
-                else:
+        else:
             final_ghat = ghat_delay.copy()
         
         if not final_ghat.empty:
@@ -677,18 +676,14 @@ if df is not None:
                 c4.write(clean_date(row[col_issue_dt]))
                 c5.write(f"🕒 {int(row['DELAY_DAYS'])} Days")
                 
-                # Show which window this item falls into
+                # Show which window(s) this item falls into
                 days = row['DELAY_DAYS']
-                if is_followup(days):
-                    window_str = "FOLLOWUP"
-                elif is_qc(days):
-                    window_str = "QC"
-                elif is_admin(days):
-                    window_str = "ADMIN"
-                elif is_mgmt(days):
-                    window_str = "MGMT"
-                else:
-                    window_str = "OTHER"
+                windows = []
+                if is_followup(days): windows.append("FOLLOWUP")
+                if is_qc(days): windows.append("QC")
+                if is_admin(days): windows.append("ADMIN")
+                if is_mgmt(days): windows.append("MGMT")
+                window_str = "/".join(windows)
                 c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{window_str}</span>", unsafe_allow_html=True)
                 
                 c7.write(row.get('KARIGAR', '---'))
@@ -759,7 +754,8 @@ if df is not None:
                     else:
                         st.info("This bag is CLOSED. View history above.")
         else:
-            st.success("✅ No Ghat delays in your department window.")            # --- DOWNLOAD CENTER ---
+            st.success("✅ No Ghat delays in your department window.")
+            # --- DOWNLOAD CENTER ---
     elif active_report == "📄 Export GHAT Report":
         st.header("📄 Export GHAT Delay Report")
 
