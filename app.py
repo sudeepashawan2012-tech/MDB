@@ -209,15 +209,38 @@ if df is not None:
     df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
     
-    # --- SIDEBAR NAVIGATION ---
-    st.sidebar.markdown("### 📊 MAIN REPORTS")
-    menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Analytics"], label_visibility="collapsed")
+        # --- SIDEBAR NAVIGATION (ROLE-BASED) ---
     
+    # MAIN REPORTS: Only for FOLLOWUP, ADMIN, MGMT, OWNER
+    if user_perms["can_view_reports"]:
+        st.sidebar.markdown("### 📊 MAIN REPORTS")
+        menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Analytics"], label_visibility="collapsed")
+    else:
+        menu = "📊 Metal Requirements"  # Dummy default, won't be used
+
+    # DELAY REPORTS: Everyone sees this, but GHAT access varies
     st.sidebar.markdown("### 🚨 DELAY REPORTS")
-    delay_menu = st.sidebar.radio("SELECT DELAY REPORT", ["None", "🕒 CAD Delay Report", "🕒 Ghat Delay Report"], label_visibility="collapsed")
+    
+    # CAD Delay: Only for FOLLOWUP, ADMIN, MGMT, OWNER
+    if user_perms["can_view_cad_delay"]:
+        delay_options = ["None", "🕒 CAD Delay Report", "🕒 Ghat Delay Report"]
+    else:
+        delay_options = ["None", "🕒 Ghat Delay Report"]
+    
+    delay_menu = st.sidebar.radio("SELECT DELAY REPORT", delay_options, label_visibility="collapsed")
+
+    # DOWNLOAD CENTER: Only for ADMIN, MGMT, OWNER
+    if user_perms["can_download"]:
+        st.sidebar.markdown("### 📥 DOWNLOAD CENTER")
+        download_menu = st.sidebar.radio("SELECT EXPORT", ["None", "📄 Export GHAT Report"], label_visibility="collapsed")
+    else:
+        download_menu = "None"
 
     # Determine which report to show
-    active_report = delay_menu if delay_menu != "None" else menu
+    if download_menu != "None":
+        active_report = download_menu
+    else:
+        active_report = delay_menu if delay_menu != "None" else menu
 
     st.sidebar.divider()
     if st.sidebar.button("🔄 REFRESH MOVEMENT DATA"):
