@@ -109,8 +109,9 @@ def count_business_days(start_date, end_date):
 DELAY_ACTIONS_TABLE = "jewelry-sql-system.workshop_data.delay_actions"
 DELAY_SNAPSHOT_TABLE = "jewelry-sql-system.workshop_data.delay_report_snapshot"
 
-def get_delay_actions():
-    """Fetch all delay actions from BigQuery."""
+@st.cache_data(ttl=60)
+def get_delay_actions_cached():
+    """Fetch all delay actions from BigQuery with caching."""
     try:
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.delay_actions`"
         df = client.query(query).to_dataframe()
@@ -118,83 +119,18 @@ def get_delay_actions():
     except Exception as e:
         return pd.DataFrame()
 
-def get_delay_snapshot():
-    """Fetch latest delay snapshot from BigQuery."""
+def get_delay_actions():
+    """Non-cached wrapper for immediate refresh after actions."""
     try:
-        query = "SELECT * FROM `jewelry-sql-system.workshop_data.delay_report_snapshot`"
+        query = "SELECT * FROM `jewelry-sql-system.workshop_data.delay_actions`"
         df = client.query(query).to_dataframe()
         return df
     except Exception as e:
         return pd.DataFrame()
 
-def upsert_delay_action(bag_no, assigned_to, status, remarks, action_by, action_date=None):
-    """Insert or update a delay action record using parameterized queries."""
-    if action_date is None:
-        action_date = datetime.now()
-
-    # Use parameterized query to prevent SQL injection
-    query = """
-    MERGE `jewelry-sql-system.workshop_data.delay_actions` T
-    USING (SELECT @bag_no AS BAG_NO) S
-    ON T.BAG_NO = S.BAG_NO
-    WHEN MATCHED THEN
-      UPDATE SET 
-        ASSIGNED_TO = @assigned_to,
-        STATUS = @status,
-        REMARKS = @remarks,
-        ACTION_BY = @action_by,
-        ACTION_DATE = @action_date
-    WHEN NOT MATCHED THEN
-      INSERT (BAG_NO, ASSIGNED_TO, STATUS, REMARKS, ACTION_BY, ACTION_DATE)
-      VALUES (@bag_no, @assigned_to, @status, @remarks, @action_by, @action_date)
-    """
-
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no)),
-            bigquery.ScalarQueryParameter("assigned_to", "STRING", str(assigned_to)),
-            bigquery.ScalarQueryParameter("status", "STRING", str(status)),
-            bigquery.ScalarQueryParameter("remarks", "STRING", str(remarks)),
-            bigquery.ScalarQueryParameter("action_by", "STRING", str(action_by)),
-            bigquery.ScalarQueryParameter("action_date", "TIMESTAMP", action_date),
-        ]
-    )
-
-    try:
-        client.query(query, job_config=job_config).result()
-        return True
-    except Exception as e:
-        st.error(f"Delay Action Error: {e}")
-        return False
-
-def insert_delay_history(bag_no, from_dept, to_dept, remarks, action_by):
-    """Insert into delay history trail table using parameterized query."""
-    action_date = datetime.now()
-    query = """
-    INSERT INTO `jewelry-sql-system.workshop_data.delay_history` 
-    (BAG_NO, FROM_DEPT, TO_DEPT, REMARKS, ACTION_BY, ACTION_DATE)
-    VALUES (@bag_no, @from_dept, @to_dept, @remarks, @action_by, @action_date)
-    """
-
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no)),
-            bigquery.ScalarQueryParameter("from_dept", "STRING", str(from_dept)),
-            bigquery.ScalarQueryParameter("to_dept", "STRING", str(to_dept)),
-            bigquery.ScalarQueryParameter("remarks", "STRING", str(remarks)),
-            bigquery.ScalarQueryParameter("action_by", "STRING", str(action_by)),
-            bigquery.ScalarQueryParameter("action_date", "TIMESTAMP", action_date),
-        ]
-    )
-
-    try:
-        client.query(query, job_config=job_config).result()
-        return True
-    except Exception as e:
-        return False
-
-def get_delay_history(bag_no):
-    """Get full history trail for a bag using parameterized query."""
+@st.cache_data(ttl=60)
+def get_delay_history_cached(bag_no):
+    """Get full history trail for a bag with caching."""
     query = """
     SELECT * FROM `jewelry-sql-system.workshop_data.delay_history` 
     WHERE BAG_NO = @bag_no 
@@ -211,9 +147,104 @@ def get_delay_history(bag_no):
     except:
         return pd.DataFrame()
 
+def get_delay_history(bag_no):
+    """Non-cached wrapper for immediate refresh."""
+    query = """
+    SELECT * FROM `jewelry-sql-system.workshop_data.delay_history` 
+    WHERE BAG_NO = @bag_no 
+    ORDER BY ACTION_DATE ASC
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no)),
+        ]
+    )
+    try:
+        df = client.query(query, job_config=job_config).to_dataframe()
+        return df
+    except:
+        return pd.DataFrame()
+
+def get_delay_snapshot():
+    """Fetch latest delay snapshot from BigQuery."""
+    try:
+        query = "SELECT * FROM `jewelry-sql-system.workshop_data.delay_report_snapshot`"
+        df = client.query(query).to_dataframe()
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
+def upsert_delay_action(bag_no, assigned_to, status, remarks, action_by, action_date=None):
+    """Insert or update a delay action record using parameterized queries."""
+    if action_date is None:
+        action_date = datetime.now()
+    
+    query = """
+    MERGE `jewelry-sql-system.workshop_data.delay_actions` T
+    USING (SELECT @bag_no AS BAG_NO) S
+    ON T.BAG_NO = S.BAG_NO
+    WHEN MATCHED THEN
+      UPDATE SET 
+        ASSIGNED_TO = @assigned_to,
+        STATUS = @status,
+        REMARKS = @remarks,
+        ACTION_BY = @action_by,
+        ACTION_DATE = @action_date
+    WHEN NOT MATCHED THEN
+      INSERT (BAG_NO, ASSIGNED_TO, STATUS, REMARKS, ACTION_BY, ACTION_DATE)
+      VALUES (@bag_no, @assigned_to, @status, @remarks, @action_by, @action_date)
+    """
+    
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no)),
+            bigquery.ScalarQueryParameter("assigned_to", "STRING", str(assigned_to)),
+            bigquery.ScalarQueryParameter("status", "STRING", str(status)),
+            bigquery.ScalarQueryParameter("remarks", "STRING", str(remarks)),
+            bigquery.ScalarQueryParameter("action_by", "STRING", str(action_by)),
+            bigquery.ScalarQueryParameter("action_date", "TIMESTAMP", action_date),
+        ]
+    )
+    
+    try:
+        client.query(query, job_config=job_config).result()
+        # Clear cache after mutation
+        get_delay_actions_cached.clear()
+        return True
+    except Exception as e:
+        st.error(f"Delay Action Error: {e}")
+        return False
+
+def insert_delay_history(bag_no, from_dept, to_dept, remarks, action_by):
+    """Insert into delay history trail table using parameterized query."""
+    action_date = datetime.now()
+    query = """
+    INSERT INTO `jewelry-sql-system.workshop_data.delay_history` 
+    (BAG_NO, FROM_DEPT, TO_DEPT, REMARKS, ACTION_BY, ACTION_DATE)
+    VALUES (@bag_no, @from_dept, @to_dept, @remarks, @action_by, @action_date)
+    """
+    
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no)),
+            bigquery.ScalarQueryParameter("from_dept", "STRING", str(from_dept)),
+            bigquery.ScalarQueryParameter("to_dept", "STRING", str(to_dept)),
+            bigquery.ScalarQueryParameter("remarks", "STRING", str(remarks)),
+            bigquery.ScalarQueryParameter("action_by", "STRING", str(action_by)),
+            bigquery.ScalarQueryParameter("action_date", "TIMESTAMP", action_date),
+        ]
+    )
+    
+    try:
+        client.query(query, job_config=job_config).result()
+        # Clear cache for this bag
+        get_delay_history_cached.clear()
+        return True
+    except Exception as e:
+        return False
+
 def create_delay_tables():
     """Create delay actions and history tables with explicit schema."""
-    # Drop and recreate to ensure proper schema
     drop_queries = [
         "DROP TABLE IF EXISTS `jewelry-sql-system.workshop_data.delay_actions`",
         "DROP TABLE IF EXISTS `jewelry-sql-system.workshop_data.delay_history`",
@@ -272,23 +303,23 @@ def auto_escalate_delays(ghat_items_df):
     actions_df = get_delay_actions()
     if actions_df.empty:
         return ghat_items_df
-
+    
     today = datetime.now()
     escalation_chain = {"FOLLOWUP": "QC", "QC": "ADMIN", "ADMIN": "MGMT", "MGMT": "MGMT"}
-
+    
     for _, row in actions_df.iterrows():
         bag_no = row['BAG_NO']
         assigned_to = row['ASSIGNED_TO']
         action_date = row['ACTION_DATE']
         status = row.get('STATUS', 'OPEN')
-
+        
         if status == 'CLOSED':
             continue
-
+            
         if pd.notna(action_date):
             action_dt = pd.to_datetime(action_date)
             biz_days = count_business_days(action_dt, today)
-
+            
             if biz_days > 2 and assigned_to in escalation_chain:
                 new_assign = escalation_chain[assigned_to]
                 if new_assign != assigned_to:
@@ -299,9 +330,9 @@ def auto_escalate_delays(ghat_items_df):
                     )
                     insert_delay_history(bag_no, assigned_to, new_assign, 
                                         f'Auto-escalated after {biz_days} business days', 'SYSTEM')
-
+    
     return ghat_items_df
-
+    
 # ========== ROLE-BASED LOGIN SYSTEM ==========
 
 USER_ROLES = {
