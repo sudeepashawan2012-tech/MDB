@@ -548,36 +548,36 @@ if df is not None:
         else:
             st.success("✅ No CAD delays found with current criteria.")
 
-    # --- GHAT DELAY REPORT v2 ---
+        # --- GHAT DELAY REPORT v2 ---
     elif active_report == "🕒 Ghat Delay Report":
         st.header("🕒 Ghat Delay Report v2")
         st.info("Logic: Metal Issued +7 business days, Diamond Issue blank. Auto-escalation: 2 business days per department.")
-
+        
         create_delay_tables()
-
+        
         ghat_df = df.copy()
         ghat_df['METAL_ISSUE_DT'] = pd.to_datetime(ghat_df[col_issue_dt], dayfirst=True, errors='coerce')
-
+        
         col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), 'DIA_ISSUE_DATE')
-
+        
         # Base filter: Metal Issued AND Diamond Issue blank
         mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \
                (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
-
+        
         ghat_delay = ghat_df[mask].copy()
         today = datetime.now()
-
+        
         # Calculate business days delay (Mon-Sat, skip Sunday)
         ghat_delay['DELAY_DAYS'] = ghat_delay['METAL_ISSUE_DT'].apply(
             lambda x: count_business_days(x, today) if pd.notna(x) else 0
         )
-
+        
         # v2: Items >7 business days delay
         ghat_delay = ghat_delay[ghat_delay['DELAY_DAYS'] > 7].sort_values('DELAY_DAYS', ascending=False)
-
+        
         # Get existing delay actions
         actions_df = get_delay_actions()
-
+        
         if not actions_df.empty:
             actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
             # CRITICAL FIX: Rename BAG_NO to match col_bag before merge
@@ -591,10 +591,10 @@ if df is not None:
         else:
             ghat_delay['ASSIGNED_TO'] = 'FOLLOWUP'
             ghat_delay['STATUS'] = 'OPEN'
-
+        
         # Auto-escalate
         auto_escalate_delays(ghat_delay)
-
+        
         # Re-fetch after auto-escalation
         actions_df = get_delay_actions()
         if not actions_df.empty:
@@ -607,9 +607,8 @@ if df is not None:
             )
             ghat_delay['ASSIGNED_TO'] = ghat_delay['ASSIGNED_TO'].fillna('FOLLOWUP')
             ghat_delay['STATUS'] = ghat_delay['STATUS'].fillna('OPEN')
-
+        
         # --- DEPARTMENT FILTERING ---
-        # Each department ONLY sees their own assigned items
         if user_role == "FOLLOWUP":
             # FOLLOWUP sees only items 7-9 business days (newly triggered, not yet escalated)
             final_ghat = ghat_delay[
@@ -621,48 +620,43 @@ if df is not None:
         elif user_role == "ADMIN":
             final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == 'ADMIN'].copy()
         elif user_role == "MGMT":
-            final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == 'MGMT'].copy()
+            # MGMT sees ALL items that are either:
+            # - Auto-escalated to MGMT, OR
+            # - Forwarded to MGMT by another dept, OR
+            # - Still at MGMT and not closed/forwarded elsewhere
+            final_ghat = ghat_delay[
+                (ghat_delay['ASSIGNED_TO'] == 'MGMT') | 
+                (ghat_delay['STATUS'] == 'AUTO_ESCALATED')
+            ].copy()
         elif user_role == "BAGGING":
             final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == 'BAGGING'].copy()
         elif user_role == "OWNER":
             final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == 'OWNER'].copy()
         else:
             final_ghat = ghat_delay.copy()
-
+        
         if not final_ghat.empty:
-            # --- FILTERING OPTIONS ---
+            # --- FILTERING OPTIONS (NO DATE RANGE) ---
             st.write("#### 🔍 Filter Results")
-            f1, f2, f3, f4 = st.columns(4)
-
+            f1, f2, f3 = st.columns(3)
+            
             with f1:
                 sel_cust = st.multiselect("Filter by Customer", sorted(final_ghat[col_cust].unique()))
             with f2:
                 sel_karigar = st.multiselect("Filter by Karigar", sorted(final_ghat['KARIGAR'].astype(str).unique()))
             with f3:
                 sel_otype = st.multiselect("Filter by Order Type", sorted(final_ghat[col_order_type].unique()))
-            with f4:
-                min_d = final_ghat['METAL_ISSUE_DT'].min().date()
-                max_d = final_ghat['METAL_ISSUE_DT'].max().date()
-                date_range = st.date_input(
-                    "Metal Issue Date (DD/MM/YYYY)", 
-                    [min_d, max_d],
-                    format="DD/MM/YYYY"
-                )
 
             if sel_cust: final_ghat = final_ghat[final_ghat[col_cust].isin(sel_cust)]
             if sel_karigar: final_ghat = final_ghat[final_ghat['KARIGAR'].astype(str).isin(sel_karigar)]
             if sel_otype: final_ghat = final_ghat[final_ghat[col_order_type].isin(sel_otype)]
-            if len(date_range) == 2:
-                final_ghat = final_ghat[(final_ghat['METAL_ISSUE_DT'].dt.date >= date_range[0]) & 
-                                      (final_ghat['METAL_ISSUE_DT'].dt.date <= date_range[1])]
 
             # Store for download
             st.session_state['ghat_filtered_data'] = final_ghat.copy()
             st.session_state['ghat_filters'] = {
                 'customer': sel_cust,
                 'karigar': sel_karigar,
-                'order_type': sel_otype,
-                'date_range': date_range
+                'order_type': sel_otype
             }
 
             # Display Table
@@ -680,10 +674,10 @@ if df is not None:
                 c5.write(f"🕒 {int(row['DELAY_DAYS'])} Days")
                 c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{row['ASSIGNED_TO']}</span>", unsafe_allow_html=True)
                 c7.write(row.get('KARIGAR', '---'))
-
+                
                 status_color = "green" if row['STATUS'] == 'CLOSED' else "orange" if row['STATUS'] == 'AUTO_ESCALATED' else "blue"
                 c8.markdown(f"<span style='color:{status_color};'>{row['STATUS']}</span>", unsafe_allow_html=True)
-
+                
                 img_url = row.get('IMAGE_LINK')
                 if img_url and str(img_url).strip() not in ["", "---", "None"]:
                     file_id = str(img_url).split("id=")[1].split("&")[0] if "id=" in str(img_url) else (str(img_url).split("d/")[1].split("/")[0] if "d/" in str(img_url) else None)
@@ -691,11 +685,7 @@ if df is not None:
                         thumb = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
                         c9.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                 st.divider()
-
-                bag_no = row[col_bag]
-                current_assigned = row['ASSIGNED_TO']
-                current_status = row['STATUS']
-
+                
                 bag_no = row[col_bag]
                 current_assigned = row['ASSIGNED_TO']
                 current_status = row['STATUS']
@@ -749,7 +739,8 @@ if df is not None:
                                 st.rerun()
                     else:
                         st.info("This bag is CLOSED. View history above.")
-
+        else:
+            st.success("✅ No Ghat delays assigned to your department.")
     # --- DOWNLOAD CENTER ---
     elif active_report == "📄 Export GHAT Report":
         st.header("📄 Export GHAT Delay Report")
