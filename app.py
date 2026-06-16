@@ -36,16 +36,20 @@ def get_firestore_db():
         # Try to get existing app
         firebase_admin.get_app()
     except ValueError:
-        # Initialize with the same service account credentials
-        # Option 1: Use the same GCP credentials (if Firestore API is enabled)
+        # Initialize with Application Default Credentials
         try:
-            firebase_admin.initialize_app(credentials=None, options={'projectId': creds.project_id})
+            # Option 1: Use ADC (works when GOOGLE_APPLICATION_CREDENTIALS is set)
+            firebase_admin.initialize_app(options={'projectId': 'jewelry-sql-system'})
         except Exception:
-            # Option 2: Use service account dict from secrets
+            # Option 2: Use service account dict from secrets properly
             try:
-                service_account_info = st.secrets["gcp_service_account"]
+                import json
+                service_account_info = dict(st.secrets["gcp_service_account"])
+                # Fix private key format
+                if 'private_key' in service_account_info:
+                    service_account_info['private_key'] = service_account_info['private_key'].replace('\\n', '\n')
                 fb_creds = credentials.Certificate(service_account_info)
-                firebase_admin.initialize_app(fb_creds)
+                firebase_admin.initialize_app(fb_creds, options={'projectId': 'jewelry-sql-system'})
             except Exception as e:
                 st.error(f"Firestore init failed: {e}")
                 return None
