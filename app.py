@@ -197,39 +197,46 @@ def fs_get_delay_actions():
     """INSTANT read from Firestore. Returns DataFrame."""
     if db is None:
         return get_delay_actions_bq()
-
-    docs = db.collection(FS_DELAY_ACTIONS).stream()
-    data = []
-    for doc in docs:
-        d = doc.to_dict()
-        d['BAG_NO'] = doc.id  # document ID is bag_no
-        data.append(d)
-
-    if not data:
+    
+    try:
+        docs = db.collection(FS_DELAY_ACTIONS).limit(100).stream()
+        data = []
+        for doc in docs:
+            d = doc.to_dict()
+            d['BAG_NO'] = doc.id
+            data.append(d)
+        
+        if not data:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(data)
+        df.columns = [str(c).upper() for c in df.columns]
+        return df
+    except Exception as e:
+        st.warning(f"Firestore read error: {e}")
         return pd.DataFrame()
-
-    df = pd.DataFrame(data)
-    # Normalize column names to match existing code
-    df.columns = [str(c).upper() for c in df.columns]
-    return df
 
 def fs_get_delay_history(bag_no):
     """INSTANT read history from Firestore."""
     if db is None:
         return get_delay_history_bq(bag_no)
-
-    docs = db.collection(FS_DELAY_HISTORY).where('bag_no', '==', str(bag_no)).order_by('action_date').stream()
-    data = []
-    for doc in docs:
-        d = doc.to_dict()
-        data.append(d)
-
-    if not data:
+    
+    try:
+        docs = db.collection(FS_DELAY_HISTORY).where('bag_no', '==', str(bag_no)).limit(50).stream()
+        data = []
+        for doc in docs:
+            d = doc.to_dict()
+            data.append(d)
+        
+        if not data:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(data)
+        df.columns = [str(c).upper() for c in df.columns]
+        return df
+    except Exception as e:
+        st.warning(f"Firestore history read error: {e}")
         return pd.DataFrame()
-
-    df = pd.DataFrame(data)
-    df.columns = [str(c).upper() for c in df.columns]
-    return df
 
 def fs_get_delay_actions_for_bags(bag_list):
     """Batch fetch actions for multiple bags - very efficient."""
