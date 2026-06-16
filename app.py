@@ -679,28 +679,27 @@ if df is not None:
         try:
             actions_df = fs_get_delay_actions()
             st.write(f"DEBUG: Firestore actions fetched: {len(actions_df)} rows")
-if not actions_df.empty:
-    st.write(f"DEBUG: Actions columns: {list(actions_df.columns)}")
+            if not actions_df.empty:
+                st.write(f"DEBUG: Actions columns: {list(actions_df.columns)}")
         except Exception as e:
             st.warning(f"Could not fetch Firestore actions: {e}")
             actions_df = pd.DataFrame()
         
-        # Merge with actions to check for manual overrides
+        # Add Firestore actions to ghat_delay
         if not actions_df.empty and 'BAG_NO' in actions_df.columns:
-            st.write(f"DEBUG: After merge, ghat_delay has {len(ghat_delay)} rows")
-            st.write(f"DEBUG: Columns: {list(ghat_delay.columns)}")
-
             actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
             actions_df = actions_df.rename(columns={'BAG_NO': col_bag})
-            # Only merge columns that exist in both
-            merge_cols = [c for c in [col_bag, 'ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE'] if c in actions_df.columns]
-            if len(merge_cols) > 1:
-                ghat_delay = ghat_delay.merge(actions_df[merge_cols], on=col_bag, how='left')
+            # Only add columns that exist
+            add_cols = [c for c in [col_bag, 'ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE'] if c in actions_df.columns]
+            if len(add_cols) > 1:
+                ghat_delay = ghat_delay.merge(actions_df[add_cols], on=col_bag, how='left')
             else:
                 ghat_delay['ASSIGNED_TO'] = None
                 ghat_delay['STATUS'] = None
                 ghat_delay['REMARKS'] = None
                 ghat_delay['ACTION_DATE'] = None
+            st.write(f"DEBUG: After adding actions, ghat_delay has {len(ghat_delay)} rows")
+            st.write(f"DEBUG: Columns: {list(ghat_delay.columns)}")
         else:
             ghat_delay['ASSIGNED_TO'] = None
             ghat_delay['STATUS'] = None
