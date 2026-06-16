@@ -641,64 +641,82 @@ if df is not None:
         else:
             st.success("✅ No CAD delays found with current criteria.")
 
-    # --- GHAT DELAY REPORT v2 WITH FIRESTORE ---
+        # --- GHAT DELAY REPORT v2 WITH FIRESTORE ---
     elif active_report == "🕒 Ghat Delay Report":
         st.header("🕒 Ghat Delay Report v2")
         st.info("Logic: Metal Issued +7 business days, Diamond Issue blank. Date-window department assignment. ⚡ INSTANT actions via Firestore")
-
+        
         ghat_df = df.copy()
         ghat_df['METAL_ISSUE_DT'] = pd.to_datetime(ghat_df[col_issue_dt], dayfirst=True, errors='coerce')
-
+        
         col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), 'DIA_ISSUE_DATE')
-
+        
         # Base filter: Metal Issued AND Diamond Issue blank
         mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \
                (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
-
+        
         ghat_delay = ghat_df[mask].copy()
+        
+        if ghat_delay.empty:
+            st.success("✅ No items match the base filter (Metal Issued + Diamond Issue blank).")
+            st.stop()
+        
         today = datetime.now()
-
+        
         # Calculate business days delay (Mon-Sat, skip Sunday)
         ghat_delay['DELAY_DAYS'] = ghat_delay['METAL_ISSUE_DT'].apply(
             lambda x: count_business_days(x, today) if pd.notna(x) else 0
         )
-
+        
         # Only items >= 7 business days
         ghat_delay = ghat_delay[ghat_delay['DELAY_DAYS'] >= 7].sort_values('DELAY_DAYS', ascending=False)
-
+        
+        if ghat_delay.empty:
+            st.success("✅ No items with 7+ business days delay.")
+            st.stop()
+        
         # ====== INSTANT: Fetch actions from Firestore ======
-        actions_df = fs_get_delay_actions()
-
+        try:
+            actions_df = fs_get_delay_actions()
+        except Exception as e:
+            st.warning(f"Could not fetch Firestore actions: {e}")
+            actions_df = pd.DataFrame()
+        
         # Merge with actions to check for manual overrides
-        if not actions_df.empty:
+        if not actions_df.empty and 'BAG_NO' in actions_df.columns:
             actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
             actions_df = actions_df.rename(columns={'BAG_NO': col_bag})
-            ghat_delay = ghat_delay.merge(
-                actions_df[[col_bag, 'ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE']], 
-                on=col_bag, how='left'
-            )
+            # Only merge columns that exist in both
+            merge_cols = [c for c in [col_bag, 'ASSIGNED_TO', 'STATUS', 'REMARKS', 'ACTION_DATE'] if c in actions_df.columns]
+            if len(merge_cols) > 1:
+                ghat_delay = ghat_delay.merge(actions_df[merge_cols], on=col_bag, how='left')
+            else:
+                ghat_delay['ASSIGNED_TO'] = None
+                ghat_delay['STATUS'] = None
+                ghat_delay['REMARKS'] = None
+                ghat_delay['ACTION_DATE'] = None
         else:
             ghat_delay['ASSIGNED_TO'] = None
             ghat_delay['STATUS'] = None
             ghat_delay['REMARKS'] = None
             ghat_delay['ACTION_DATE'] = None
-
+        
         # Determine which departments should see this item based on date windows
         def is_followup(days):
             return 7 <= days <= 9
-
+        
         def is_qc(days):
             return 9 <= days <= 11
-
+        
         def is_admin(days):
             return 11 <= days <= 13
-
+        
         def is_mgmt(days):
             return days >= 14
-
+        
         # Check if item is manually closed
         ghat_delay['IS_CLOSED'] = ghat_delay['STATUS'] == 'CLOSED'
-
+        
         # --- DEPARTMENT FILTERING ---
         if user_role == "FOLLOWUP":
             final_ghat = ghat_delay[
@@ -721,137 +739,143 @@ if df is not None:
                 (ghat_delay['DELAY_DAYS'].apply(is_mgmt))
             ].copy()
         elif user_role == "BAGGING":
-            # BAGGING only sees items manually assigned to BAGGING
             final_ghat = ghat_delay[ghat_delay['ASSIGNED_TO'] == 'BAGGING'].copy()
         elif user_role == "OWNER":
-            # OWNER sees all non-closed items
             final_ghat = ghat_delay[~ghat_delay['IS_CLOSED']].copy()
         else:
             final_ghat = ghat_delay.copy()
-
-        if not final_ghat.empty:
-            # --- FILTERING OPTIONS ---
-            st.write("#### 🔍 Filter Results")
-            f1, f2, f3 = st.columns(3)
-
-            with f1:
-                sel_cust = st.multiselect("Filter by Customer", sorted(final_ghat[col_cust].unique()))
-            with f2:
-                sel_karigar = st.multiselect("Filter by Karigar", sorted(final_ghat['KARIGAR'].astype(str).unique()))
-            with f3:
-                sel_otype = st.multiselect("Filter by Order Type", sorted(final_ghat[col_order_type].unique()))
-
-            if sel_cust: final_ghat = final_ghat[final_ghat[col_cust].isin(sel_cust)]
-            if sel_karigar: final_ghat = final_ghat[final_ghat['KARIGAR'].astype(str).isin(sel_karigar)]
-            if sel_otype: final_ghat = final_ghat[final_ghat[col_order_type].isin(sel_otype)]
-
-            # Store for download
-            st.session_state['ghat_filtered_data'] = final_ghat.copy()
-            st.session_state['ghat_filters'] = {
-                'customer': sel_cust,
-                'karigar': sel_karigar,
-                'order_type': sel_otype
-            }
-
-            # Display Table
-            cols = st.columns([1, 1, 1, 1, 0.8, 0.8, 1, 1.2, 1.5])
-            headers = ["Customer", "Order Date", "Bag No", "Metal Issue", "Delay", "Window", "Karigar", "Status", "Design"]
-            for col, text in zip(cols, headers): col.markdown(f"**{text}**")
-            st.divider()
-
-            for _, row in final_ghat.iterrows():
-                c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns([1, 1, 1, 1, 0.8, 0.8, 1, 1.2, 1.5])
-                c1.write(row[col_cust])
-                c2.write(clean_date(row['ORDER_DATE']))
-                c3.write(f"**{row[col_bag]}**")
-                c4.write(clean_date(row[col_issue_dt]))
-                c5.write(f"🕒 {int(row['DELAY_DAYS'])} Days")
-
-                # Show which window(s) this item falls into
-                days = row['DELAY_DAYS']
-                windows = []
-                if is_followup(days): windows.append("FOLLOWUP")
-                if is_qc(days): windows.append("QC")
-                if is_admin(days): windows.append("ADMIN")
-                if is_mgmt(days): windows.append("MGMT")
-                window_str = "/".join(windows)
-                c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{window_str}</span>", unsafe_allow_html=True)
-
-                c7.write(row.get('KARIGAR', '---'))
-
-                # Show status
-                display_status = row.get('STATUS') if pd.notna(row.get('STATUS')) else 'DATE_TRIGGERED'
-                status_color = "green" if display_status == 'CLOSED' else "purple" if display_status == 'FORWARDED' else "blue"
-                c8.markdown(f"<span style='color:{status_color};'>{display_status}</span>", unsafe_allow_html=True)
-
-                img_url = row.get('IMAGE_LINK')
-                if img_url and str(img_url).strip() not in ["", "---", "None"]:
-                    file_id = str(img_url).split("id=")[1].split("&")[0] if "id=" in str(img_url) else (str(img_url).split("d/")[1].split("/")[0] if "d/" in str(img_url) else None)
-                    if file_id:
-                        thumb = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
-                        c9.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
-                st.divider()
-
-                bag_no = row[col_bag]
-                current_status = row.get('STATUS')
-
-                # ====== INSTANT ACTION PANEL ======
-                with st.expander(f"📝 Actions for Bag {bag_no}"):
-                    # Show history - INSTANT from Firestore
-                    history = fs_get_delay_history(bag_no)
-                    if not history.empty:
-                        st.markdown("**📋 History Trail:**")
-                        for _, h in history.iterrows():
-                            action_dt = h.get('ACTION_DATE', '---')
-                            if hasattr(action_dt, 'strftime'):
-                                action_dt_str = action_dt.strftime('%d-%b-%Y %H:%M')
-                            else:
-                                action_dt_str = str(action_dt)
-                            st.markdown(f"<small>{action_dt_str} | **{h.get('FROM_DEPT', '---')}** → **{h.get('TO_DEPT', '---')}** | By: {h.get('ACTION_BY', '---')} | {h.get('REMARKS', '')}</small>", unsafe_allow_html=True)
-                        st.divider()
-
-                    if current_status != 'CLOSED':
-                        # Forward / Close options inside form
-                        with st.form(key=f"form_{bag_no}", clear_on_submit=True):
-                            action_col1, action_col2 = st.columns(2)
-
-                            with action_col1:
-                                forward_options = []
-                                if user_role == "FOLLOWUP":
-                                    forward_options = ["QC", "BAGGING", "ADMIN", "CLOSE"]
-                                elif user_role == "QC":
-                                    forward_options = ["ADMIN", "BAGGING", "MGMT", "FOLLOWUP", "CLOSE"]
-                                elif user_role == "ADMIN":
-                                    forward_options = ["MGMT", "FOLLOWUP", "QC", "BAGGING", "CLOSE"]
-                                elif user_role == "MGMT":
-                                    forward_options = ["FOLLOWUP", "QC", "BAGGING", "ADMIN", "CLOSE"]
-                                elif user_role == "BAGGING":
-                                    forward_options = ["FOLLOWUP", "CLOSE"]
-                                elif user_role == "OWNER":
-                                    forward_options = ["FOLLOWUP", "QC", "ADMIN", "MGMT", "BAGGING", "CLOSE"]
-
-                                new_assign = st.selectbox(f"Forward to", forward_options, key=f"fwd_{bag_no}")
-
-                            with action_col2:
-                                remarks = st.text_area("Remarks", key=f"rem_{bag_no}", height=68)
-
-                            submitted = st.form_submit_button("✅ Submit Action")
-
-                            if submitted:
-                                # ====== INSTANT FIRESTORE WRITE ======
-                                if new_assign == "CLOSE":
-                                    fs_upsert_delay_action(bag_no, user_role, 'CLOSED', remarks, user_role)
-                                    fs_insert_delay_history(bag_no, user_role, 'CLOSED', remarks, user_role)
-                                    st.success(f"✅ Bag {bag_no} closed instantly!")
-                                else:
-                                    fs_upsert_delay_action(bag_no, new_assign, 'FORWARDED', remarks, user_role)
-                                    fs_insert_delay_history(bag_no, user_role, new_assign, remarks, user_role)
-                                    st.success(f"✅ Bag {bag_no} forwarded to {new_assign} instantly!")
-                                st.rerun()
-                    else:
-                        st.info("This bag is CLOSED. View history above.")
-        else:
+        
+        if final_ghat.empty:
             st.success("✅ No Ghat delays in your department window.")
+            st.stop()
+        
+        # --- FILTERING OPTIONS ---
+        st.write("#### 🔍 Filter Results")
+        f1, f2, f3 = st.columns(3)
+        
+        with f1:
+            cust_vals = final_ghat[col_cust].dropna().unique() if col_cust in final_ghat.columns else []
+            sel_cust = st.multiselect("Filter by Customer", sorted(cust_vals))
+        with f2:
+            karigar_vals = final_ghat['KARIGAR'].dropna().astype(str).unique() if 'KARIGAR' in final_ghat.columns else []
+            sel_karigar = st.multiselect("Filter by Karigar", sorted(karigar_vals))
+        with f3:
+            otype_vals = final_ghat[col_order_type].dropna().unique() if col_order_type in final_ghat.columns else []
+            sel_otype = st.multiselect("Filter by Order Type", sorted(otype_vals))
+
+        if sel_cust and col_cust in final_ghat.columns: final_ghat = final_ghat[final_ghat[col_cust].isin(sel_cust)]
+        if sel_karigar and 'KARIGAR' in final_ghat.columns: final_ghat = final_ghat[final_ghat['KARIGAR'].astype(str).isin(sel_karigar)]
+        if sel_otype and col_order_type in final_ghat.columns: final_ghat = final_ghat[final_ghat[col_order_type].isin(sel_otype)]
+
+        # Store for download
+        st.session_state['ghat_filtered_data'] = final_ghat.copy()
+        st.session_state['ghat_filters'] = {
+            'customer': sel_cust,
+            'karigar': sel_karigar,
+            'order_type': sel_otype
+        }
+
+        # Display Table
+        cols = st.columns([1, 1, 1, 1, 0.8, 0.8, 1, 1.2, 1.5])
+        headers = ["Customer", "Order Date", "Bag No", "Metal Issue", "Delay", "Window", "Karigar", "Status", "Design"]
+        for col, text in zip(cols, headers): col.markdown(f"**{text}**")
+        st.divider()
+
+        for _, row in final_ghat.iterrows():
+            c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns([1, 1, 1, 1, 0.8, 0.8, 1, 1.2, 1.5])
+            c1.write(row.get(col_cust, '---'))
+            c2.write(clean_date(row.get('ORDER_DATE', '---')))
+            c3.write(f"**{row.get(col_bag, '---')}**")
+            c4.write(clean_date(row.get(col_issue_dt, '---')))
+            c5.write(f"🕒 {int(row.get('DELAY_DAYS', 0))} Days")
+            
+            days = row.get('DELAY_DAYS', 0)
+            windows = []
+            if is_followup(days): windows.append("FOLLOWUP")
+            if is_qc(days): windows.append("QC")
+            if is_admin(days): windows.append("ADMIN")
+            if is_mgmt(days): windows.append("MGMT")
+            window_str = "/".join(windows)
+            c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{window_str}</span>", unsafe_allow_html=True)
+            
+            karigar_val = row.get('KARIGAR', '---')
+            c7.write(karigar_val if pd.notna(karigar_val) else '---')
+            
+            display_status = row.get('STATUS') if pd.notna(row.get('STATUS')) else 'DATE_TRIGGERED'
+            status_color = "green" if display_status == 'CLOSED' else "purple" if display_status == 'FORWARDED' else "blue"
+            c8.markdown(f"<span style='color:{status_color};'>{display_status}</span>", unsafe_allow_html=True)
+            
+            img_url = row.get('IMAGE_LINK')
+            if img_url and str(img_url).strip() not in ["", "---", "None"]:
+                file_id = None
+                if "id=" in str(img_url): file_id = str(img_url).split("id=")[1].split("&")[0]
+                elif "d/" in str(img_url): file_id = str(img_url).split("d/")[1].split("/")[0]
+                if file_id:
+                    thumb = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
+                    c9.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
+            st.divider()
+            
+            bag_no = row.get(col_bag)
+            if not bag_no: continue
+            current_status = row.get('STATUS')
+            
+            # ====== INSTANT ACTION PANEL ======
+            with st.expander(f"📝 Actions for Bag {bag_no}"):
+                try:
+                    history = fs_get_delay_history(bag_no)
+                except Exception:
+                    history = pd.DataFrame()
+                
+                if not history.empty:
+                    st.markdown("**📋 History Trail:**")
+                    for _, h in history.iterrows():
+                        action_dt = h.get('ACTION_DATE', '---')
+                        if hasattr(action_dt, 'strftime'):
+                            action_dt_str = action_dt.strftime('%d-%b-%Y %H:%M')
+                        else:
+                            action_dt_str = str(action_dt)
+                        st.markdown(f"<small>{action_dt_str} | **{h.get('FROM_DEPT', '---')}** → **{h.get('TO_DEPT', '---')}** | By: {h.get('ACTION_BY', '---')} | {h.get('REMARKS', '')}</small>", unsafe_allow_html=True)
+                    st.divider()
+                
+                if current_status != 'CLOSED':
+                    with st.form(key=f"form_{bag_no}", clear_on_submit=True):
+                        action_col1, action_col2 = st.columns(2)
+                        
+                        with action_col1:
+                            forward_options = []
+                            if user_role == "FOLLOWUP":
+                                forward_options = ["QC", "BAGGING", "ADMIN", "CLOSE"]
+                            elif user_role == "QC":
+                                forward_options = ["ADMIN", "BAGGING", "MGMT", "FOLLOWUP", "CLOSE"]
+                            elif user_role == "ADMIN":
+                                forward_options = ["MGMT", "FOLLOWUP", "QC", "BAGGING", "CLOSE"]
+                            elif user_role == "MGMT":
+                                forward_options = ["FOLLOWUP", "QC", "BAGGING", "ADMIN", "CLOSE"]
+                            elif user_role == "BAGGING":
+                                forward_options = ["FOLLOWUP", "CLOSE"]
+                            elif user_role == "OWNER":
+                                forward_options = ["FOLLOWUP", "QC", "ADMIN", "MGMT", "BAGGING", "CLOSE"]
+                            
+                            new_assign = st.selectbox(f"Forward to", forward_options, key=f"fwd_{bag_no}")
+                        
+                        with action_col2:
+                            remarks = st.text_area("Remarks", key=f"rem_{bag_no}", height=68)
+                        
+                        submitted = st.form_submit_button("✅ Submit Action")
+                        
+                        if submitted:
+                            if new_assign == "CLOSE":
+                                fs_upsert_delay_action(bag_no, user_role, 'CLOSED', remarks, user_role)
+                                fs_insert_delay_history(bag_no, user_role, 'CLOSED', remarks, user_role)
+                                st.success(f"✅ Bag {bag_no} closed instantly!")
+                            else:
+                                fs_upsert_delay_action(bag_no, new_assign, 'FORWARDED', remarks, user_role)
+                                fs_insert_delay_history(bag_no, user_role, new_assign, remarks, user_role)
+                                st.success(f"✅ Bag {bag_no} forwarded to {new_assign} instantly!")
+                            st.rerun()
+                else:
+                    st.info("This bag is CLOSED. View history above.")
+                
 
     # --- DOWNLOAD CENTER ---
     elif active_report == "📄 Export GHAT Report":
