@@ -5,14 +5,57 @@ from google.oauth2 import service_account
 from datetime import datetime, timedelta
 import json
 
+# ============================================================
+# FIREBASE FIRESTORE IMPORTS (NEW - for instant operations)
+# ============================================================
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+    FIRESTORE_AVAILABLE = True
+except ImportError:
+    FIRESTORE_AVAILABLE = False
+    st.warning("firebase-admin not installed. Run: pip install firebase-admin")
+
+# ============================================================
 # 1. INITIAL SETUP & CLIENT DEFINITION
+# ============================================================
 st.set_page_config(page_title="WORKSHOP REPORTS", layout="wide")
 
+# --- BIGQUERY SETUP (unchanged for master data, reports, analytics) ---
 scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
 creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
 client = bigquery.Client(credentials=creds, project=creds.project_id)
 
-# 2. HELPER FUNCTIONS
+# --- FIRESTORE SETUP (NEW - for instant delay actions) ---
+@st.cache_resource
+def get_firestore_db():
+    """Initialize Firestore client using same GCP service account."""
+    if not FIRESTORE_AVAILABLE:
+        return None
+    try:
+        # Try to get existing app
+        firebase_admin.get_app()
+    except ValueError:
+        # Initialize with the same service account credentials
+        # Option 1: Use the same GCP credentials (if Firestore API is enabled)
+        try:
+            firebase_admin.initialize_app(credentials=None, options={'projectId': creds.project_id})
+        except Exception:
+            # Option 2: Use service account dict from secrets
+            try:
+                service_account_info = st.secrets["gcp_service_account"]
+                fb_creds = credentials.Certificate(service_account_info)
+                firebase_admin.initialize_app(fb_creds)
+            except Exception as e:
+                st.error(f"Firestore init failed: {e}")
+                return None
+    return firestore.client()
+
+db = get_firestore_db()
+
+# ============================================================
+# 2. HELPER FUNCTIONS (unchanged)
+# ============================================================
 def get_drive_direct_link(url):
     try:
         if "id=" in str(url):
@@ -30,13 +73,10 @@ def refresh_native_tables():
         queries = [
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.master_inventory_native` 
                AS SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`""",
-
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.SALE_DATA_native` 
                AS SELECT * FROM `jewelry-sql-system.workshop_data.SALE_DATA`""",
-
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.pre_finish_movement_native` 
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement`""",
-
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.post_finish_movement_native` 
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement`"""
         ]
@@ -84,7 +124,6 @@ def clean_date(dt):
     except: return str(dt)
 
 def add_business_days(start_date, days):
-    """Add business days (Mon-Sat) to a date, skipping Sundays only."""
     current = pd.to_datetime(start_date, dayfirst=True).date()
     added = 0
     while added < days:
@@ -94,7 +133,6 @@ def add_business_days(start_date, days):
     return current
 
 def count_business_days(start_date, end_date):
-    """Count business days (Mon-Sat) between two dates, skipping Sundays."""
     current = pd.to_datetime(start_date, dayfirst=True).date()
     end = pd.to_datetime(end_date, dayfirst=True).date()
     count = 0
@@ -104,75 +142,126 @@ def count_business_days(start_date, end_date):
             count += 1
     return count
 
-# ========== DELAY ACTIONS TABLE HELPERS ==========
+# ============================================================
+# ========== FIRESTORE DELAY ACTIONS (NEW - INSTANT) ==========
+# ============================================================
 
-@st.cache_data(ttl=120)
-def get_delay_actions_cached():
-    """Fetch all delay actions from BigQuery with caching."""
-    try:
-        query = "SELECT * FROM `jewelry-sql-system.workshop_data.delay_actions`"
-        df = client.query(query).to_dataframe()
-        return df
-    except Exception as e:
+# Collection names in Firestore
+FS_DELAY_ACTIONS = "delay_actions"
+FS_DELAY_HISTORY = "delay_history"
+
+def fs_upsert_delay_action(bag_no, assigned_to, status, remarks, action_by, action_date=None):
+    """INSTANT write to Firestore. No lag, no native table refresh needed."""
+    if db is None:
+        st.error("Firestore not available. Falling back to BigQuery.")
+        return upsert_delay_action_bq(bag_no, assigned_to, status, remarks, action_by, action_date)
+
+    if action_date is None:
+        action_date = datetime.now()
+
+    doc_ref = db.collection(FS_DELAY_ACTIONS).document(str(bag_no))
+    doc_ref.set({
+        'bag_no': str(bag_no),
+        'assigned_to': str(assigned_to),
+        'status': str(status),
+        'remarks': str(remarks),
+        'action_by': str(action_by),
+        'action_date': action_date,
+        'updated_at': firestore.SERVER_TIMESTAMP
+    }, merge=True)
+    return True
+
+def fs_insert_delay_history(bag_no, from_dept, to_dept, remarks, action_by):
+    """INSTANT write history trail to Firestore."""
+    if db is None:
+        return insert_delay_history_bq(bag_no, from_dept, to_dept, remarks, action_by)
+
+    action_date = datetime.now()
+    # Use auto-generated document ID for history entries
+    db.collection(FS_DELAY_HISTORY).add({
+        'bag_no': str(bag_no),
+        'from_dept': str(from_dept),
+        'to_dept': str(to_dept),
+        'remarks': str(remarks),
+        'action_by': str(action_by),
+        'action_date': action_date,
+        'created_at': firestore.SERVER_TIMESTAMP
+    })
+    return True
+
+def fs_get_delay_actions():
+    """INSTANT read from Firestore. Returns DataFrame."""
+    if db is None:
+        return get_delay_actions_bq()
+
+    docs = db.collection(FS_DELAY_ACTIONS).stream()
+    data = []
+    for doc in docs:
+        d = doc.to_dict()
+        d['BAG_NO'] = doc.id  # document ID is bag_no
+        data.append(d)
+
+    if not data:
         return pd.DataFrame()
 
-def get_delay_actions():
-    """Non-cached wrapper for immediate refresh after actions."""
-    try:
-        query = "SELECT * FROM `jewelry-sql-system.workshop_data.delay_actions`"
-        df = client.query(query).to_dataframe()
-        return df
-    except Exception as e:
+    df = pd.DataFrame(data)
+    # Normalize column names to match existing code
+    df.columns = [str(c).upper() for c in df.columns]
+    return df
+
+def fs_get_delay_history(bag_no):
+    """INSTANT read history from Firestore."""
+    if db is None:
+        return get_delay_history_bq(bag_no)
+
+    docs = db.collection(FS_DELAY_HISTORY).where('bag_no', '==', str(bag_no)).order_by('action_date').stream()
+    data = []
+    for doc in docs:
+        d = doc.to_dict()
+        data.append(d)
+
+    if not data:
         return pd.DataFrame()
 
-@st.cache_data(ttl=120)
-def get_delay_history_cached(bag_no):
-    """Get full history trail for a bag with caching."""
-    query = """
-    SELECT * FROM `jewelry-sql-system.workshop_data.delay_history` 
-    WHERE BAG_NO = @bag_no 
-    ORDER BY ACTION_DATE ASC
-    """
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no)),
-        ]
-    )
-    try:
-        df = client.query(query, job_config=job_config).to_dataframe()
-        return df
-    except:
+    df = pd.DataFrame(data)
+    df.columns = [str(c).upper() for c in df.columns]
+    return df
+
+def fs_get_delay_actions_for_bags(bag_list):
+    """Batch fetch actions for multiple bags - very efficient."""
+    if db is None or not bag_list:
         return pd.DataFrame()
 
-def get_delay_history(bag_no):
-    """Non-cached wrapper for immediate refresh."""
-    query = """
-    SELECT * FROM `jewelry-sql-system.workshop_data.delay_history` 
-    WHERE BAG_NO = @bag_no 
-    ORDER BY ACTION_DATE ASC
-    """
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no)),
-        ]
-    )
-    try:
-        df = client.query(query, job_config=job_config).to_dataframe()
-        return df
-    except:
+    # Firestore 'in' query supports up to 30 items per query
+    all_data = []
+    chunk_size = 30
+    for i in range(0, len(bag_list), chunk_size):
+        chunk = bag_list[i:i + chunk_size]
+        docs = db.collection(FS_DELAY_ACTIONS).where('bag_no', 'in', chunk).stream()
+        for doc in docs:
+            d = doc.to_dict()
+            all_data.append(d)
+
+    if not all_data:
         return pd.DataFrame()
 
-def get_delay_snapshot():
-    """Fetch latest delay snapshot from BigQuery."""
-    try:
-        query = "SELECT * FROM `jewelry-sql-system.workshop_data.delay_report_snapshot`"
-        df = client.query(query).to_dataframe()
-        return df
-    except Exception as e:
-        return pd.DataFrame()
+    df = pd.DataFrame(all_data)
+    df.columns = [str(c).upper() for c in df.columns]
+    return df
 
-def upsert_delay_action(bag_no, assigned_to, status, remarks, action_by, action_date=None):
-    """Insert or update a delay action record using parameterized queries."""
+def fs_delete_delay_action(bag_no):
+    """Delete a delay action (e.g., when bag is no longer delayed)."""
+    if db is None:
+        return False
+    db.collection(FS_DELAY_ACTIONS).document(str(bag_no)).delete()
+    return True
+
+# ============================================================
+# ========== BIGQUERY DELAY ACTIONS (FALLBACK / REPORTS) ======
+# ============================================================
+
+def upsert_delay_action_bq(bag_no, assigned_to, status, remarks, action_by, action_date=None):
+    """BigQuery MERGE - slower but reliable fallback."""
     if action_date is None:
         action_date = datetime.now()
 
@@ -191,7 +280,6 @@ def upsert_delay_action(bag_no, assigned_to, status, remarks, action_by, action_
       INSERT (BAG_NO, ASSIGNED_TO, STATUS, REMARKS, ACTION_BY, ACTION_DATE)
       VALUES (@bag_no, @assigned_to, @status, @remarks, @action_by, @action_date)
     """
-
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no)),
@@ -202,24 +290,21 @@ def upsert_delay_action(bag_no, assigned_to, status, remarks, action_by, action_
             bigquery.ScalarQueryParameter("action_date", "TIMESTAMP", action_date),
         ]
     )
-
     try:
         client.query(query, job_config=job_config).result()
-        get_delay_actions_cached.clear()
         return True
     except Exception as e:
-        st.error(f"Delay Action Error: {e}")
+        st.error(f"BQ Delay Action Error: {e}")
         return False
 
-def insert_delay_history(bag_no, from_dept, to_dept, remarks, action_by):
-    """Insert into delay history trail table using parameterized query."""
+def insert_delay_history_bq(bag_no, from_dept, to_dept, remarks, action_by):
+    """BigQuery history insert - fallback."""
     action_date = datetime.now()
     query = """
     INSERT INTO `jewelry-sql-system.workshop_data.delay_history` 
     (BAG_NO, FROM_DEPT, TO_DEPT, REMARKS, ACTION_BY, ACTION_DATE)
     VALUES (@bag_no, @from_dept, @to_dept, @remarks, @action_by, @action_date)
     """
-
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no)),
@@ -230,94 +315,83 @@ def insert_delay_history(bag_no, from_dept, to_dept, remarks, action_by):
             bigquery.ScalarQueryParameter("action_date", "TIMESTAMP", action_date),
         ]
     )
-
     try:
         client.query(query, job_config=job_config).result()
-        get_delay_history_cached.clear()
         return True
     except Exception as e:
         return False
 
-def create_delay_tables():
-    """Create delay actions and history tables if they don't exist."""
-    queries = [
-        """
-        CREATE TABLE IF NOT EXISTS `jewelry-sql-system.workshop_data.delay_actions` (
-            BAG_NO STRING NOT NULL,
-            ASSIGNED_TO STRING,
-            STATUS STRING,
-            REMARKS STRING,
-            ACTION_BY STRING,
-            ACTION_DATE TIMESTAMP,
-            CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+def get_delay_actions_bq():
+    """Fetch from BigQuery - fallback when Firestore unavailable."""
+    try:
+        query = "SELECT * FROM `jewelry-sql-system.workshop_data.delay_actions`"
+        df = client.query(query).to_dataframe()
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
+def get_delay_history_bq(bag_no):
+    """Fetch history from BigQuery - fallback."""
+    query = """
+    SELECT * FROM `jewelry-sql-system.workshop_data.delay_history` 
+    WHERE BAG_NO = @bag_no 
+    ORDER BY ACTION_DATE ASC
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("bag_no", "STRING", str(bag_no))]
+    )
+    try:
+        df = client.query(query, job_config=job_config).to_dataframe()
+        return df
+    except:
+        return pd.DataFrame()
+
+# ============================================================
+# ========== SYNC: Firestore -> BigQuery (for reports) =======
+# ============================================================
+
+def sync_delay_actions_to_bigquery():
+    """Sync all Firestore delay actions to BigQuery for reporting.
+    Call this periodically or on-demand from Download Center."""
+    if db is None:
+        return False
+
+    docs = db.collection(FS_DELAY_ACTIONS).stream()
+    rows = []
+    for doc in docs:
+        d = doc.to_dict()
+        rows.append({
+            'BAG_NO': d.get('bag_no', doc.id),
+            'ASSIGNED_TO': d.get('assigned_to', ''),
+            'STATUS': d.get('status', ''),
+            'REMARKS': d.get('remarks', ''),
+            'ACTION_BY': d.get('action_by', ''),
+            'ACTION_DATE': d.get('action_date', datetime.now()),
+        })
+
+    if not rows:
+        return True
+
+    # Delete existing and insert new (simple approach)
+    try:
+        client.query("DELETE FROM `jewelry-sql-system.workshop_data.delay_actions` WHERE TRUE").result()
+
+        # Use BigQuery streaming insert for speed
+        errors = client.insert_rows_json(
+            'jewelry-sql-system.workshop_data.delay_actions',
+            rows
         )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS `jewelry-sql-system.workshop_data.delay_history` (
-            BAG_NO STRING NOT NULL,
-            FROM_DEPT STRING,
-            TO_DEPT STRING,
-            REMARKS STRING,
-            ACTION_BY STRING,
-            ACTION_DATE TIMESTAMP,
-            CREATED_AT TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS `jewelry-sql-system.workshop_data.delay_report_snapshot` (
-            BAG_NO STRING NOT NULL,
-            CUSTOMER STRING,
-            ORDER_DATE STRING,
-            METAL_ISSUE_DATE STRING,
-            DELAY_DAYS INT64,
-            ASSIGNED_TO STRING,
-            STATUS STRING,
-            SNAPSHOT_DATE TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
-        )
-        """
-    ]
-    for q in queries:
-        try:
-            client.query(q).result()
-        except Exception as e:
-            pass
+        if errors:
+            st.error(f"BQ sync errors: {errors}")
+            return False
+        return True
+    except Exception as e:
+        st.error(f"Sync to BQ failed: {e}")
+        return False
 
-def auto_escalate_delays(ghat_items_df):
-    """Auto-escalate items that have been at a department for >2 business days."""
-    actions_df = get_delay_actions()
-    if actions_df.empty:
-        return ghat_items_df
-
-    today = datetime.now()
-    escalation_chain = {"FOLLOWUP": "QC", "QC": "ADMIN", "ADMIN": "MGMT", "MGMT": "MGMT"}
-
-    for _, row in actions_df.iterrows():
-        bag_no = row['BAG_NO']
-        assigned_to = row['ASSIGNED_TO']
-        action_date = row['ACTION_DATE']
-        status = row.get('STATUS', 'OPEN')
-
-        if status == 'CLOSED':
-            continue
-
-        if pd.notna(action_date):
-            action_dt = pd.to_datetime(action_date)
-            biz_days = count_business_days(action_dt, today)
-
-            if biz_days > 2 and assigned_to in escalation_chain:
-                new_assign = escalation_chain[assigned_to]
-                if new_assign != assigned_to:
-                    upsert_delay_action(
-                        bag_no, new_assign, 'AUTO_ESCALATED', 
-                        f'Auto-escalated from {assigned_to} after {biz_days} business days',
-                        'SYSTEM'
-                    )
-                    insert_delay_history(bag_no, assigned_to, new_assign, 
-                                        f'Auto-escalated after {biz_days} business days', 'SYSTEM')
-
-    return ghat_items_df
-
-# ========== ROLE-BASED LOGIN SYSTEM ==========
+# ============================================================
+# ========== ROLE-BASED LOGIN SYSTEM (unchanged) =============
+# ============================================================
 
 USER_ROLES = {
     "FOLLOWUP": {
@@ -423,6 +497,12 @@ if st.sidebar.button("🚪 Logout"):
         st.session_state.pop(key, None)
     st.rerun()
 
+# Firestore status indicator
+if db is not None:
+    st.sidebar.success("⚡ Firestore: Connected (Instant Mode)")
+else:
+    st.sidebar.warning("⚠️ Firestore: Offline (Using BigQuery Fallback)")
+
 df = fetch_data()
 
 if df is not None:
@@ -469,6 +549,15 @@ if df is not None:
     if st.sidebar.button("🔄 REFRESH MOVEMENT DATA"):
         with st.sidebar.spinner("Syncing..."):
             refresh_native_tables()
+
+    # NEW: Sync Firestore to BigQuery button (for reports)
+    if user_role in ["ADMIN", "OWNER"] and db is not None:
+        if st.sidebar.button("🔄 SYNC DELAY DATA TO BQ"):
+            with st.sidebar.spinner("Syncing Firestore -> BigQuery..."):
+                if sync_delay_actions_to_bigquery():
+                    st.sidebar.success("Sync complete!")
+                else:
+                    st.sidebar.error("Sync failed!")
 
     # --- REPORT logic ---
 
@@ -548,36 +637,34 @@ if df is not None:
         else:
             st.success("✅ No CAD delays found with current criteria.")
 
-                # --- GHAT DELAY REPORT v2 ---
+    # --- GHAT DELAY REPORT v2 WITH FIRESTORE ---
     elif active_report == "🕒 Ghat Delay Report":
         st.header("🕒 Ghat Delay Report v2")
-        st.info("Logic: Metal Issued +7 business days, Diamond Issue blank. Date-window department assignment.")
-        
-        create_delay_tables()
-        
+        st.info("Logic: Metal Issued +7 business days, Diamond Issue blank. Date-window department assignment. ⚡ INSTANT actions via Firestore")
+
         ghat_df = df.copy()
         ghat_df['METAL_ISSUE_DT'] = pd.to_datetime(ghat_df[col_issue_dt], dayfirst=True, errors='coerce')
-        
+
         col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), 'DIA_ISSUE_DATE')
-        
+
         # Base filter: Metal Issued AND Diamond Issue blank
         mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \
                (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
-        
+
         ghat_delay = ghat_df[mask].copy()
         today = datetime.now()
-        
+
         # Calculate business days delay (Mon-Sat, skip Sunday)
         ghat_delay['DELAY_DAYS'] = ghat_delay['METAL_ISSUE_DT'].apply(
             lambda x: count_business_days(x, today) if pd.notna(x) else 0
         )
-        
+
         # Only items >= 7 business days
         ghat_delay = ghat_delay[ghat_delay['DELAY_DAYS'] >= 7].sort_values('DELAY_DAYS', ascending=False)
-        
-        # Get existing delay actions (manual assignments + closes)
-        actions_df = get_delay_actions()
-        
+
+        # ====== INSTANT: Fetch actions from Firestore ======
+        actions_df = fs_get_delay_actions()
+
         # Merge with actions to check for manual overrides
         if not actions_df.empty:
             actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
@@ -591,23 +678,23 @@ if df is not None:
             ghat_delay['STATUS'] = None
             ghat_delay['REMARKS'] = None
             ghat_delay['ACTION_DATE'] = None
-        
-        # Determine which departments should see this item based on date windows (from Excel)
+
+        # Determine which departments should see this item based on date windows
         def is_followup(days):
             return 7 <= days <= 9
-        
+
         def is_qc(days):
             return 9 <= days <= 11
-        
+
         def is_admin(days):
             return 11 <= days <= 13
-        
+
         def is_mgmt(days):
             return days >= 14
-        
+
         # Check if item is manually closed
         ghat_delay['IS_CLOSED'] = ghat_delay['STATUS'] == 'CLOSED'
-        
+
         # --- DEPARTMENT FILTERING ---
         if user_role == "FOLLOWUP":
             final_ghat = ghat_delay[
@@ -637,12 +724,12 @@ if df is not None:
             final_ghat = ghat_delay[~ghat_delay['IS_CLOSED']].copy()
         else:
             final_ghat = ghat_delay.copy()
-        
+
         if not final_ghat.empty:
-            # --- FILTERING OPTIONS (NO DATE RANGE) ---
+            # --- FILTERING OPTIONS ---
             st.write("#### 🔍 Filter Results")
             f1, f2, f3 = st.columns(3)
-            
+
             with f1:
                 sel_cust = st.multiselect("Filter by Customer", sorted(final_ghat[col_cust].unique()))
             with f2:
@@ -675,7 +762,7 @@ if df is not None:
                 c3.write(f"**{row[col_bag]}**")
                 c4.write(clean_date(row[col_issue_dt]))
                 c5.write(f"🕒 {int(row['DELAY_DAYS'])} Days")
-                
+
                 # Show which window(s) this item falls into
                 days = row['DELAY_DAYS']
                 windows = []
@@ -685,14 +772,14 @@ if df is not None:
                 if is_mgmt(days): windows.append("MGMT")
                 window_str = "/".join(windows)
                 c6.markdown(f"<span style='color:#FF6B35;font-weight:bold;'>{window_str}</span>", unsafe_allow_html=True)
-                
+
                 c7.write(row.get('KARIGAR', '---'))
-                
+
                 # Show status
                 display_status = row.get('STATUS') if pd.notna(row.get('STATUS')) else 'DATE_TRIGGERED'
                 status_color = "green" if display_status == 'CLOSED' else "purple" if display_status == 'FORWARDED' else "blue"
                 c8.markdown(f"<span style='color:{status_color};'>{display_status}</span>", unsafe_allow_html=True)
-                
+
                 img_url = row.get('IMAGE_LINK')
                 if img_url and str(img_url).strip() not in ["", "---", "None"]:
                     file_id = str(img_url).split("id=")[1].split("&")[0] if "id=" in str(img_url) else (str(img_url).split("d/")[1].split("/")[0] if "d/" in str(img_url) else None)
@@ -700,25 +787,30 @@ if df is not None:
                         thumb = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
                         c9.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                 st.divider()
-                
+
                 bag_no = row[col_bag]
                 current_status = row.get('STATUS')
-                
-                # Action panel using st.form for performance
+
+                # ====== INSTANT ACTION PANEL ======
                 with st.expander(f"📝 Actions for Bag {bag_no}"):
-                    # Show history
-                    history = get_delay_history_cached(bag_no)
+                    # Show history - INSTANT from Firestore
+                    history = fs_get_delay_history(bag_no)
                     if not history.empty:
                         st.markdown("**📋 History Trail:**")
                         for _, h in history.iterrows():
-                            st.markdown(f"<small>{h['ACTION_DATE'].strftime('%d-%b-%Y %H:%M')} | **{h['FROM_DEPT']}** → **{h['TO_DEPT']}** | By: {h['ACTION_BY']} | {h['REMARKS']}</small>", unsafe_allow_html=True)
+                            action_dt = h.get('ACTION_DATE', '---')
+                            if hasattr(action_dt, 'strftime'):
+                                action_dt_str = action_dt.strftime('%d-%b-%Y %H:%M')
+                            else:
+                                action_dt_str = str(action_dt)
+                            st.markdown(f"<small>{action_dt_str} | **{h.get('FROM_DEPT', '---')}** → **{h.get('TO_DEPT', '---')}** | By: {h.get('ACTION_BY', '---')} | {h.get('REMARKS', '')}</small>", unsafe_allow_html=True)
                         st.divider()
-                    
+
                     if current_status != 'CLOSED':
                         # Forward / Close options inside form
                         with st.form(key=f"form_{bag_no}", clear_on_submit=True):
                             action_col1, action_col2 = st.columns(2)
-                            
+
                             with action_col1:
                                 forward_options = []
                                 if user_role == "FOLLOWUP":
@@ -733,29 +825,31 @@ if df is not None:
                                     forward_options = ["FOLLOWUP", "CLOSE"]
                                 elif user_role == "OWNER":
                                     forward_options = ["FOLLOWUP", "QC", "ADMIN", "MGMT", "BAGGING", "CLOSE"]
-                                
+
                                 new_assign = st.selectbox(f"Forward to", forward_options, key=f"fwd_{bag_no}")
-                            
+
                             with action_col2:
                                 remarks = st.text_area("Remarks", key=f"rem_{bag_no}", height=68)
-                            
+
                             submitted = st.form_submit_button("✅ Submit Action")
-                            
+
                             if submitted:
+                                # ====== INSTANT FIRESTORE WRITE ======
                                 if new_assign == "CLOSE":
-                                    upsert_delay_action(bag_no, user_role, 'CLOSED', remarks, user_role)
-                                    insert_delay_history(bag_no, user_role, 'CLOSED', remarks, user_role)
-                                    st.success(f"✅ Bag {bag_no} closed!")
+                                    fs_upsert_delay_action(bag_no, user_role, 'CLOSED', remarks, user_role)
+                                    fs_insert_delay_history(bag_no, user_role, 'CLOSED', remarks, user_role)
+                                    st.success(f"✅ Bag {bag_no} closed instantly!")
                                 else:
-                                    upsert_delay_action(bag_no, new_assign, 'FORWARDED', remarks, user_role)
-                                    insert_delay_history(bag_no, user_role, new_assign, remarks, user_role)
-                                    st.success(f"✅ Bag {bag_no} forwarded to {new_assign}!")
+                                    fs_upsert_delay_action(bag_no, new_assign, 'FORWARDED', remarks, user_role)
+                                    fs_insert_delay_history(bag_no, user_role, new_assign, remarks, user_role)
+                                    st.success(f"✅ Bag {bag_no} forwarded to {new_assign} instantly!")
                                 st.rerun()
                     else:
                         st.info("This bag is CLOSED. View history above.")
         else:
             st.success("✅ No Ghat delays in your department window.")
-            # --- DOWNLOAD CENTER ---
+
+    # --- DOWNLOAD CENTER ---
     elif active_report == "📄 Export GHAT Report":
         st.header("📄 Export GHAT Delay Report")
 
@@ -765,12 +859,13 @@ if df is not None:
             export_cols = [col_cust, 'ORDER_DATE', col_bag, col_issue_dt, 'DELAY_DAYS', 'ASSIGNED_TO', 'STATUS', 'KARIGAR']
             export_cols = [c for c in export_cols if c in export_df.columns]
 
+            # Get history from Firestore for export
             history_data = []
             for bag in export_df[col_bag].unique():
-                hist = get_delay_history(bag)
+                hist = fs_get_delay_history(bag)
                 if not hist.empty:
                     hist_str = " | ".join([
-                        f"{h['FROM_DEPT']}→{h['TO_DEPT']}({h['ACTION_BY']})"
+                        f"{h.get('FROM_DEPT', '---')}→{h.get('TO_DEPT', '---')}({h.get('ACTION_BY', '---')})"
                         for _, h in hist.iterrows()
                     ])
                     history_data.append({'BAG_NO': bag, 'HISTORY': hist_str})
