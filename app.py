@@ -678,12 +678,18 @@ if df is not None:
         # ====== INSTANT: Fetch actions from Firestore ======
         try:
             actions_df = fs_get_delay_actions()
+            st.write(f"DEBUG: Firestore actions fetched: {len(actions_df)} rows")
+if not actions_df.empty:
+    st.write(f"DEBUG: Actions columns: {list(actions_df.columns)}")
         except Exception as e:
             st.warning(f"Could not fetch Firestore actions: {e}")
             actions_df = pd.DataFrame()
         
         # Merge with actions to check for manual overrides
         if not actions_df.empty and 'BAG_NO' in actions_df.columns:
+            st.write(f"DEBUG: After merge, ghat_delay has {len(ghat_delay)} rows")
+            st.write(f"DEBUG: Columns: {list(ghat_delay.columns)}")
+
             actions_df = actions_df.sort_values('ACTION_DATE', ascending=False).drop_duplicates('BAG_NO', keep='first')
             actions_df = actions_df.rename(columns={'BAG_NO': col_bag})
             # Only merge columns that exist in both
@@ -744,7 +750,7 @@ if df is not None:
             final_ghat = ghat_delay[~ghat_delay['IS_CLOSED']].copy()
         else:
             final_ghat = ghat_delay.copy()
-        
+        st.write(f"DEBUG: After dept filter ({user_role}), final_ghat has {len(final_ghat)} rows")
         if final_ghat.empty:
             st.success("✅ No Ghat delays in your department window.")
             st.stop()
