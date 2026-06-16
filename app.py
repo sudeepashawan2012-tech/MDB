@@ -656,7 +656,7 @@ if df is not None:
                (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
         
         ghat_delay = ghat_df[mask].copy()
-        
+        st.write(f"DEBUG: Found {len(ghat_delay)} items after base filter")
         if ghat_delay.empty:
             st.success("✅ No items match the base filter (Metal Issued + Diamond Issue blank).")
             st.stop()
@@ -670,7 +670,7 @@ if df is not None:
         
         # Only items >= 7 business days
         ghat_delay = ghat_delay[ghat_delay['DELAY_DAYS'] >= 7].sort_values('DELAY_DAYS', ascending=False)
-        
+        st.write(f"DEBUG: Found {len(ghat_delay)} items with 7+ days delay")
         if ghat_delay.empty:
             st.success("✅ No items with 7+ business days delay.")
             st.stop()
