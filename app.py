@@ -226,7 +226,59 @@ if df is not None:
     elif active_report == "📊 Metal Requirements":
         st.header("📊 Metal Requirement Report")
         exclude = ["HOLD", "CANCEL"]
-        mask = (df[col_issue_dt].isna() | (df[col_issue_dt].astype(str).str.strip() == "")) & (~df[col_status].isin(exclude))
+
+        # ---- ROBUST METAL ISSUE DATE CHECK ----
+        # Treat NaN, empty, spaces, and common placeholders as "NOT ISSUED"
+        def is_metal_pending(val):
+            if pd.isna(val):
+                return True
+            s = str(val).strip().upper()
+            if s in ["", "NAN", "NONE", "NULL", "TBD", "PENDING", "NA", "N/A", "-", "--", ".", "0", "NO", "NOT ISSUED", "NOT DONE"]:
+                return True
+            return False
+
+        df['METAL_PENDING_FLAG'] = df[col_issue_dt].apply(is_metal_pending)
+
+        # ---- DEBUG VIEW (expand to see why rows are filtered) ----
+        with st.expander("🔍 DEBUG: Why are some bags missing? Click to see filter details"):
+            st.markdown("**Filter Logic:** Metal Issue Date must be blank/placeholder AND Status must NOT be HOLD/CANCEL")
+
+            # Show all customer rows that would be EXCLUDED and why
+            all_cust = df[df[col_order_type].str.contains("CUSTOMER", case=False, na=False)].copy()
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Customer Rows", len(all_cust))
+            c2.metric("Metal Pending (new logic)", all_cust['METAL_PENDING_FLAG'].sum())
+            c3.metric("Excluded by Status", len(all_cust[all_cust[col_status].isin(exclude)]))
+
+            # Rows that have metal issue date filled (the "missing" ones)
+            excluded_metal = all_cust[~all_cust['METAL_PENDING_FLAG']].copy()
+            if not excluded_metal.empty:
+                st.markdown("#### ⚠️ Rows with METAL ISSUE DATE filled (excluded from report):")
+                show_cols = [col_cust, col_bag, col_order_type, col_status, col_issue_dt]
+                show_cols = [c for c in show_cols if c in excluded_metal.columns]
+                st.dataframe(excluded_metal[show_cols].rename(columns={col_issue_dt: 'METAL_ISSUE_DATE'}), 
+                             hide_index=True, use_container_width=True)
+
+            # Rows excluded by status
+            excluded_status = all_cust[all_cust[col_status].isin(exclude)].copy()
+            if not excluded_status.empty:
+                st.markdown("#### 🚫 Rows with HOLD/CANCEL status (excluded from report):")
+                show_cols = [col_cust, col_bag, col_order_type, col_status]
+                show_cols = [c for c in show_cols if c in excluded_status.columns]
+                st.dataframe(excluded_status[show_cols], hide_index=True, use_container_width=True)
+
+            # Compare old vs new filter
+            old_mask = (df[col_issue_dt].isna() | (df[col_issue_dt].astype(str).str.strip() == ""))
+            old_pending = all_cust[old_mask & (~all_cust[col_status].isin(exclude))]
+            new_pending = all_cust[all_cust['METAL_PENDING_FLAG'] & (~all_cust[col_status].isin(exclude))]
+
+            st.markdown(f"**Old filter count:** {len(old_pending)}  |  **New filter count:** {len(new_pending)}")
+            if len(new_pending) > len(old_pending):
+                st.success(f"✅ New logic recovers {len(new_pending) - len(old_pending)} additional bags!")
+
+        # ---- MAIN REPORT ----
+        mask = df['METAL_PENDING_FLAG'] & (~df[col_status].isin(exclude))
         pending_df = df[mask].copy()
 
         for o_type in ["CUSTOMER", "STOCK"]:
