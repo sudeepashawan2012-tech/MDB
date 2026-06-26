@@ -2,38 +2,17 @@ import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
 from google.oauth2 import service_account
-from datetime import datetime, timedelta
-import json
+from datetime import datetime
 import gspread
 
-
-# ============================================================
 # 1. INITIAL SETUP & CLIENT DEFINITION
-# ============================================================
 st.set_page_config(page_title="WORKSHOP REPORTS", layout="wide")
 
-# --- BIGQUERY SETUP ---
 scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.com/auth/drive"]
 creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
 client = bigquery.Client(credentials=creds, project=creds.project_id)
 
-# --- GOOGLE SHEETS SETUP (for direct refresh) ---
-# Add these to your secrets.toml:
-# [gcp_service_account] ...your existing service account JSON...
-# [sheets]
-# master_inventory_sheet_id = "YOUR_SHEET_ID"
-# master_inventory_sheet_name = "Sheet1"
-# sale_data_sheet_id = "YOUR_SHEET_ID"
-# sale_data_sheet_name = "Sheet1"
-# pre_finish_sheet_id = "YOUR_SHEET_ID"
-# pre_finish_sheet_name = "Sheet1"
-# post_finish_sheet_id = "YOUR_SHEET_ID"
-# post_finish_sheet_name = "Sheet1"
-
-# ============================================================
 # 2. HELPER FUNCTIONS
-# ============================================================
-
 def get_drive_direct_link(url):
     try:
         if "id=" in str(url):
@@ -50,108 +29,150 @@ def get_drive_direct_link(url):
 def load_sheet_to_bigquery(sheet_id, sheet_name, bq_table_id):
     """
     Reads data directly from Google Sheets and loads it into BigQuery.
-    This BYPASSES any external table sync issues.
+    Handles duplicate headers, empty headers, and mixed datatypes.
     """
     try:
         gc = gspread.authorize(creds)
         worksheet = gc.open_by_key(sheet_id).worksheet(sheet_name)
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
         
-        # Clean column names
-        df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
+        # Use get_all_values to handle duplicate/empty headers manually
+        all_values = worksheet.get_all_values()
+        if not all_values or len(all_values) < 2:
+            st.sidebar.warning(f"Sheet '{sheet_name}' appears empty")
+            return None
+            
+        raw_headers = all_values[0]
         
-        # Upload to BigQuery (overwrite existing table)
+        # Clean and deduplicate headers
+        seen = {}
+        clean_headers = []
+        for i, h in enumerate(raw_headers):
+            h = str(h).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_')
+            if not h:
+                h = f"UNNAMED_COL_{i}"
+            # Handle duplicates
+            original_h = h
+            counter = 1
+            while h in seen:
+                h = f"{original_h}_DUP{counter}"
+                counter += 1
+            seen[h] = True
+            clean_headers.append(h)
+        
+        # Build dataframe from data rows
+        data_rows = all_values[1:]
+        df = pd.DataFrame(data_rows, columns=clean_headers)
+        
+        # Replace common empty/placeholder values with None
+        df = df.replace({
+            '': None, 'nan': None, 'None': None, 'NaN': None, 
+            'NULL': None, 'N/A': None, 'n/a': None, '-': None, '--': None
+        })
+        
+        # Convert object columns to string to avoid pyarrow mixed-type errors
+        for col in df.select_dtypes(include=['object']).columns:
+            df[col] = df[col].astype(str).replace('None', '')
+        
+        # Upload to BigQuery (overwrite existing)
         job_config = bigquery.LoadJobConfig(
-            write_disposition="WRITE_TRUNCATE",  # Overwrite existing data
+            write_disposition="WRITE_TRUNCATE",
             autodetect=True
         )
         job = client.load_table_from_dataframe(df, bq_table_id, job_config=job_config)
-        job.result()  # Wait for job to complete
+        job.result()
         
         return len(df)
+        
     except Exception as e:
-        st.sidebar.error(f"Sheets load failed for {bq_table_id}: {e}")
+        error_msg = str(e)
+        if "EXTERNAL" in error_msg and "not allowed for this operation" in error_msg:
+            st.sidebar.info(f"{bq_table_id.split('.')[-1]} is EXTERNAL — skipping direct load")
+        else:
+            st.sidebar.error(f"Sheets load failed: {error_msg}")
         return None
 
 
-def refresh_all_data():
+def refresh_native_tables():
     """
-    MASTER REFRESH FUNCTION:
-    1. Reads fresh data from Google Sheets
-    2. Loads into BigQuery source tables
-    3. Creates/updates _native tables
-    4. Clears all caches
+    1. Pull fresh data from Google Sheets into source tables (master_inventory, SALE_DATA)
+    2. Create/refresh _native copies for all tables
+    3. Clear Streamlit cache
     """
     try:
-        # --- STEP 1: Load from Google Sheets directly into source tables ---
         sheets_config = st.secrets.get("sheets", {})
+        refresh_count = 0
+        
+        # --- STEP 1: Load from Google Sheets (only for tables that are NOT EXTERNAL) ---
         
         # Master Inventory
-        if "master_inventory_sheet_id" in sheets_config:
+        if "master_inventory_sheet_id" in sheets_config and sheets_config["master_inventory_sheet_id"]:
             count = load_sheet_to_bigquery(
                 sheets_config["master_inventory_sheet_id"],
                 sheets_config.get("master_inventory_sheet_name", "Sheet1"),
                 "jewelry-sql-system.workshop_data.master_inventory"
             )
             if count:
-                st.sidebar.success(f"✅ Master Inventory: {count} rows loaded")
+                st.sidebar.success(f"Master Inventory: {count} rows")
+                refresh_count += 1
         
         # Sale Data
-        if "sale_data_sheet_id" in sheets_config:
+        if "sale_data_sheet_id" in sheets_config and sheets_config["sale_data_sheet_id"]:
             count = load_sheet_to_bigquery(
                 sheets_config["sale_data_sheet_id"],
                 sheets_config.get("sale_data_sheet_name", "Sheet1"),
                 "jewelry-sql-system.workshop_data.SALE_DATA"
             )
             if count:
-                st.sidebar.success(f"✅ Sale Data: {count} rows loaded")
+                st.sidebar.success(f"Sale Data: {count} rows")
+                refresh_count += 1
         
-        # Pre-Finish Movement
-        if "pre_finish_sheet_id" in sheets_config:
+        # Pre-Finish Movement (skip if EXTERNAL)
+        if "pre_finish_sheet_id" in sheets_config and sheets_config["pre_finish_sheet_id"]:
             count = load_sheet_to_bigquery(
                 sheets_config["pre_finish_sheet_id"],
                 sheets_config.get("pre_finish_sheet_name", "Sheet1"),
                 "jewelry-sql-system.workshop_data.pre_finish_movement"
             )
             if count:
-                st.sidebar.success(f"✅ Pre-Finish: {count} rows loaded")
+                st.sidebar.success(f"Pre-Finish: {count} rows")
+                refresh_count += 1
         
-        # Post-Finish Movement
-        if "post_finish_sheet_id" in sheets_config:
+        # Post-Finish Movement (skip if EXTERNAL)
+        if "post_finish_sheet_id" in sheets_config and sheets_config["post_finish_sheet_id"]:
             count = load_sheet_to_bigquery(
                 sheets_config["post_finish_sheet_id"],
                 sheets_config.get("post_finish_sheet_name", "Sheet1"),
                 "jewelry-sql-system.workshop_data.post_finish_movement"
             )
             if count:
-                st.sidebar.success(f"✅ Post-Finish: {count} rows loaded")
+                st.sidebar.success(f"Post-Finish: {count} rows")
+                refresh_count += 1
         
-        # --- STEP 2: Create _native copies (for performance) ---
+        # --- STEP 2: Create _native copies (this works for both regular and EXTERNAL source tables) ---
         queries = [
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.master_inventory_native` 
                AS SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`""",
+            
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.SALE_DATA_native` 
                AS SELECT * FROM `jewelry-sql-system.workshop_data.SALE_DATA`""",
+            
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.pre_finish_movement_native` 
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement`""",
+            
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.post_finish_movement_native` 
                CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement`"""
         ]
         for q in queries:
             client.query(q).result()
         
-        # --- STEP 3: Clear ALL caches ---
+        st.sidebar.success("All Workshop Data Refreshed!")
         st.cache_data.clear()
         
         # Store refresh timestamp
         st.session_state["last_refresh"] = datetime.now().strftime("%d-%b-%Y %H:%M:%S")
         
-        return True
-        
     except Exception as e:
-        st.sidebar.error(f"❌ Refresh Failed: {e}")
-        return False
+        st.sidebar.error(f"Refresh Failed: {e}")
 
 
 @st.cache_data(ttl=300)
@@ -194,84 +215,85 @@ def clean_date(dt):
     except: return str(dt)
 
 
-def add_business_days(start_date, days):
-    current = pd.to_datetime(start_date, dayfirst=True).date()
-    added = 0
-    while added < days:
-        current += timedelta(days=1)
-        if current.weekday() != 6:
-            added += 1
-    return current
-
-
-def count_business_days(start_date, end_date):
-    current = pd.to_datetime(start_date, dayfirst=True).date()
-    end = pd.to_datetime(end_date, dayfirst=True).date()
-    count = 0
-    while current < end:
-        current += timedelta(days=1)
-        if current.weekday() != 6:
-            count += 1
-    return count
-
-
-# ============================================================
-# 3. ROLE-BASED LOGIN SYSTEM
-# ============================================================
+# ========== ROLE-BASED LOGIN SYSTEM ==========
 
 USER_ROLES = {
     "FOLLOWUP": {
-        "password": "12345",
+        "password": "followup123",
         "can_view_reports": True,
-        "can_edit": True
+        "can_view_cad_delay": True,
+        "ghat_access": "FOLLOWUP",
+        "can_download": False,
+        "can_edit": True,
+        "is_mgmt_viewonly": False
     },
     "QC": {
-        "password": "12345",
+        "password": "qc123",
         "can_view_reports": False,
-        "can_edit": True
+        "can_view_cad_delay": False,
+        "ghat_access": "QC",
+        "can_download": False,
+        "can_edit": True,
+        "is_mgmt_viewonly": False
     },
     "BAGGING": {
-        "password": "12345",
+        "password": "bagging123",
         "can_view_reports": False,
-        "can_edit": True
+        "can_view_cad_delay": False,
+        "ghat_access": "BAGGING",
+        "can_download": False,
+        "can_edit": True,
+        "is_mgmt_viewonly": False
     },
     "ADMIN": {
-        "password": "12345",
+        "password": "admin123",
         "can_view_reports": True,
-        "can_edit": True
+        "can_view_cad_delay": True,
+        "ghat_access": "ALL",
+        "can_download": True,
+        "can_edit": True,
+        "is_mgmt_viewonly": False
     },
     "MGMT": {
-        "password": "12345",
+        "password": "mgmt123",
         "can_view_reports": True,
-        "can_edit": False
+        "can_view_cad_delay": True,
+        "ghat_access": "ALL",
+        "can_download": True,
+        "can_edit": False,
+        "is_mgmt_viewonly": True
     },
     "OWNER": {
-        "password": "12345",
+        "password": "owner123",
         "can_view_reports": True,
-        "can_edit": True
+        "can_view_cad_delay": True,
+        "ghat_access": "ALL",
+        "can_download": True,
+        "can_edit": True,
+        "is_mgmt_viewonly": False
     }
 }
 
 # Login screen
 if "user_role" not in st.session_state:
     st.title("🔒 Workshop Login")
-
+    
     selected_role = st.session_state.get("_selected_role", None)
-
+    
     if not selected_role:
         cols = st.columns(3)
         role_names = list(USER_ROLES.keys())
-
+        
         for idx, role in enumerate(role_names):
             with cols[idx % 3]:
                 if st.button(f"🔑 {role}", use_container_width=True, key=f"role_{role}"):
                     st.session_state["_selected_role"] = role
                     st.rerun()
-
+    
     if selected_role:
         st.markdown(f"### Enter password for **{selected_role}**")
         pwd = st.text_input("Password", type="password", key="pwd_input")
-
+        
         col1, col2 = st.columns([1, 3])
         with col1:
             if st.button("🔙 Back"):
@@ -285,7 +307,7 @@ if "user_role" not in st.session_state:
                     st.rerun()
                 else:
                     st.error("❌ Wrong password")
-
+    
     st.stop()
 
 # --- USER IS LOGGED IN ---
@@ -313,90 +335,180 @@ if df is not None:
     df[col_metal] = pd.to_numeric(df[col_metal], errors="coerce").fillna(0)
     df[col_dia] = pd.to_numeric(df[col_dia], errors="coerce").fillna(0)
 
+    
     # --- SIDEBAR NAVIGATION ---
-    if user_perms["can_view_reports"]:
-        st.sidebar.markdown("### 📊 MAIN REPORTS")
-        menu = st.sidebar.radio("SELECT REPORT", [
-            "📊 Metal Requirements", 
-            "📋 CSR", 
-            "📋 Scope of Work", 
-            "🔍 Bag History Report", 
-            "💰 Sales Analytics"
-        ], label_visibility="collapsed")
-    else:
-        menu = "📊 Metal Requirements"
+    st.sidebar.markdown("### 📊 MAIN REPORTS")
+    menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Analytics"], label_visibility="collapsed")
+    
+    st.sidebar.markdown("### 🚨 DELAY REPORTS")
+    delay_menu = st.sidebar.radio("SELECT DELAY REPORT", ["None", "🕒 CAD Delay Report", "🕒 Ghat Delay Report"], label_visibility="collapsed")
 
-    active_report = menu
+    # Determine which report to show
+    active_report = delay_menu if delay_menu != "None" else menu
 
     st.sidebar.divider()
     
     # Show last refresh time
     last_refresh = st.session_state.get("last_refresh", "Never")
-    st.sidebar.caption(f"🕐 Last refresh: {last_refresh}")
-    st.sidebar.caption(f"📊 Rows loaded: {len(df)}")
+    st.sidebar.caption(f"Last refresh: {last_refresh}")
+    st.sidebar.caption(f"Rows loaded: {len(df)}")
 
-    # --- REFRESH BUTTON (separate from report routing) ---
-    if st.sidebar.button("🔄 REFRESH MOVEMENT DATA", type="primary"):
-        with st.sidebar.spinner("Syncing from Google Sheets..."):
-            success = refresh_all_data()
-            if success:
-                st.sidebar.success("✅ All data refreshed from Google Sheets!")
-                st.rerun()
-            else:
-                st.sidebar.error("❌ Refresh failed. Check Sheet IDs in secrets.")
+    if st.sidebar.button("🔄 REFRESH MOVEMENT DATA"):
+        with st.sidebar.spinner("Syncing..."):
+            refresh_native_tables()
 
-    # --- REPORT ROUTING (clean if/elif chain) ---
-    if active_report == "📊 Metal Requirements":
+    # --- REPORT logic ---
+
+    if active_report == "🕒 CAD Delay Report":
+        st.header("🕒 CAD Delay Report (Stock Orders)")
+        st.info("Stock Orders: CAD is pending (> 5 days) AND Metal Issue is pending.")
+        
+        cad_df = df.copy()
+        cad_df['ORDER_DATE_DT'] = pd.to_datetime(cad_df['ORDER_DATE'], dayfirst=True, errors='coerce')
+        
+        mask = (cad_df[col_order_type].str.contains("STOCK", case=False, na=False)) & \
+               (cad_df['CAD'].isna() | (cad_df['CAD'].astype(str).str.strip() == "")) & \
+               (cad_df[col_issue_dt].isna() | (cad_df[col_issue_dt].astype(str).str.strip() == ""))
+        
+        delay_data = cad_df[mask].copy()
+        today = datetime.now()
+        delay_data['CAD_DELAY'] = (today - delay_data['ORDER_DATE_DT']).dt.days
+        
+        final_delay = delay_data[delay_data['CAD_DELAY'] > 5].sort_values('CAD_DELAY', ascending=False)
+        
+        if not final_delay.empty:
+            st.write("#### 🔍 Filter Results")
+            f1, f2, f3 = st.columns(3)
+            
+            with f1:
+                sel_cust = st.multiselect("Filter by Customer", sorted(final_delay[col_cust].unique()))
+            with f2:
+                sel_karigar = st.multiselect("Filter by Karigar", sorted(final_delay['KARIGAR'].astype(str).unique()))
+            with f3:
+                min_date = final_delay['ORDER_DATE_DT'].min().date()
+                max_date = final_delay['ORDER_DATE_DT'].max().date()
+                date_range = st.date_input(
+                    "Filter by Order Date (DD/MM/YYYY)", 
+                    [min_date, max_date],
+                    format="DD/MM/YYYY"
+                )
+            
+            if sel_cust:
+                final_delay = final_delay[final_delay[col_cust].isin(sel_cust)]
+            if sel_karigar:
+                final_delay = final_delay[final_delay['KARIGAR'].astype(str).isin(sel_karigar)]
+            if len(date_range) == 2:
+                final_delay = final_delay[(final_delay['ORDER_DATE_DT'].dt.date >= date_range[0]) & 
+                                          (final_delay['ORDER_DATE_DT'].dt.date <= date_range[1])]
+
+            h1, h2, h3, h4, h5, h6, h7 = st.columns([1.2, 1, 1.2, 1, 0.8, 1, 1.5])
+            h1.markdown("**Customer**")    
+            h2.markdown("**Order Date**")
+            h3.markdown("**Bag No**")
+            h4.markdown("**Order Type**")
+            h5.markdown("**Delay**")
+            h6.markdown("**Karigar**")
+            h7.markdown("**Design**")
+            st.divider()
+
+            for _, row in final_delay.iterrows():
+                c1, c2, c3, c4, c5, c6, c7 = st.columns([1.2, 1, 1.2, 1, 0.8, 1, 1.5])
+                c1.write(row[col_cust])
+                c2.write(clean_date(row['ORDER_DATE']))
+                c3.write(f"**{row[col_bag]}**")
+                c4.write(row[col_order_type])
+                c5.write(f"⚠️ {int(row['CAD_DELAY'])} Days")
+                c6.write(row.get('KARIGAR', '---'))
+                
+                img_url = row.get('IMAGE_LINK')
+                if img_url and str(img_url).strip() not in ["", "---", "None"]:
+                    file_id = None
+                    if "id=" in str(img_url): file_id = str(img_url).split("id=")[1].split("&")[0]
+                    elif "d/" in str(img_url): file_id = str(img_url).split("d/")[1].split("/")[0]
+                    
+                    if file_id:
+                        thumb_url = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
+                        c7.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
+                    else: c7.info("No Link")
+                else:
+                    c7.write("No Image")
+                st.divider()
+        else:
+            st.success("✅ No CAD delays found with current criteria.")
+
+    elif active_report == "🕒 Ghat Delay Report":
+        st.header("🕒 Ghat Delay Report")
+        st.info("Logic: Metal Issued but Dia Not Issued. Delay > 5 days (Small <= 5cts) or > 9 days (Big > 5cts).")
+        
+        ghat_df = df.copy()
+        ghat_df['METAL_ISSUE_DT'] = pd.to_datetime(ghat_df[col_issue_dt], dayfirst=True, errors='coerce')
+        
+        col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), 'DIA_ISSUE_DATE')
+        
+        mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \
+               (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
+        
+        ghat_delay = ghat_df[mask].copy()
+        today = datetime.now()
+        ghat_delay['DELAY_DAYS'] = (today - ghat_delay['METAL_ISSUE_DT']).dt.days
+        
+        small_p_mask = (ghat_delay[col_dia] <= 5) & (ghat_delay['DELAY_DAYS'] > 5)
+        big_p_mask = (ghat_delay[col_dia] > 5) & (ghat_delay['DELAY_DAYS'] > 9)
+        final_ghat = ghat_delay[small_p_mask | big_p_mask].sort_values('DELAY_DAYS', ascending=False)
+
+        if not final_ghat.empty:
+            st.write("#### 🔍 Filter Results")
+            f1, f2, f3, f4 = st.columns(4)
+            
+            with f1:
+                sel_cust = st.multiselect("Filter by Customer", sorted(final_ghat[col_cust].unique()))
+            with f2:
+                sel_karigar = st.multiselect("Filter by Karigar", sorted(final_ghat['KARIGAR'].astype(str).unique()))
+            with f3:
+                sel_otype = st.multiselect("Filter by Order Type", sorted(final_ghat[col_order_type].unique()))
+            with f4:
+                min_d = final_ghat['METAL_ISSUE_DT'].min().date()
+                max_d = final_ghat['METAL_ISSUE_DT'].max().date()
+                date_range = st.date_input(
+                    "Metal Issue Date (DD/MM/YYYY)", 
+                    [min_d, max_d],
+                    format="DD/MM/YYYY"
+                )
+
+            if sel_cust: final_ghat = final_ghat[final_ghat[col_cust].isin(sel_cust)]
+            if sel_karigar: final_ghat = final_ghat[final_ghat['KARIGAR'].astype(str).isin(sel_karigar)]
+            if sel_otype: final_ghat = final_ghat[final_ghat[col_order_type].isin(sel_otype)]
+            if len(date_range) == 2:
+                final_ghat = final_ghat[(final_ghat['METAL_ISSUE_DT'].dt.date >= date_range[0]) & (final_ghat['METAL_ISSUE_DT'].dt.date <= date_range[1])]
+
+            cols = st.columns([1, 1.2, 1, 1.2, 0.8, 1, 1.5])
+            headers = ["Customer", "Order Date", "Bag No", "Metal Issue", "Delay", "Karigar", "Design"]
+            for col, text in zip(cols, headers): col.markdown(f"**{text}**")
+            st.divider()
+
+            for _, row in final_ghat.iterrows():
+                c1, c2, c3, c4, c5, c6, c7 = st.columns([1, 1.2, 1, 1.2, 0.8, 1, 1.5])
+                c1.write(row[col_cust])
+                c2.write(clean_date(row['ORDER_DATE']))
+                c3.write(f"**{row[col_bag]}**")
+                c4.write(clean_date(row[col_issue_dt]))
+                c5.write(f"🕒 {int(row['DELAY_DAYS'])} Days")
+                c6.write(row.get('KARIGAR', '---'))
+                
+                img_url = row.get('IMAGE_LINK')
+                if img_url and str(img_url).strip() not in ["", "---", "None"]:
+                    file_id = str(img_url).split("id=")[1].split("&")[0] if "id=" in str(img_url) else (str(img_url).split("d/")[1].split("/")[0] if "d/" in str(img_url) else None)
+                    if file_id:
+                        thumb = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
+                        c7.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
+                st.divider()
+        else:
+            st.success("✅ No Ghat delays detected.")
+
+    elif active_report == "📊 Metal Requirements":
         st.header("📊 Metal Requirement Report")
         exclude = ["HOLD", "CANCEL"]
-
-        # ---- ROBUST METAL ISSUE DATE CHECK ----
-        def is_metal_pending(val):
-            if pd.isna(val):
-                return True
-            s = str(val).strip().upper()
-            if s in ["", "NAN", "NONE", "NULL", "TBD", "PENDING", "NA", "N/A", "-", "--", ".", "0", "NO", "NOT ISSUED", "NOT DONE"]:
-                return True
-            return False
-
-        df['METAL_PENDING_FLAG'] = df[col_issue_dt].apply(is_metal_pending)
-
-        # ---- DEBUG VIEW ----
-        with st.expander("🔍 DEBUG: Why are some bags missing? Click to see filter details"):
-            st.markdown("**Filter Logic:** Metal Issue Date must be blank/placeholder AND Status must NOT be HOLD/CANCEL")
-
-            all_cust = df[df[col_order_type].str.contains("CUSTOMER", case=False, na=False)].copy()
-
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Total Customer Rows", len(all_cust))
-            c2.metric("Metal Pending (new logic)", all_cust['METAL_PENDING_FLAG'].sum())
-            c3.metric("Excluded by Status", len(all_cust[all_cust[col_status].isin(exclude)]))
-
-            excluded_metal = all_cust[~all_cust['METAL_PENDING_FLAG']].copy()
-            if not excluded_metal.empty:
-                st.markdown("#### ⚠️ Rows with METAL ISSUE DATE filled (excluded from report):")
-                show_cols = [col_cust, col_bag, col_order_type, col_status, col_issue_dt]
-                show_cols = [c for c in show_cols if c in excluded_metal.columns]
-                st.dataframe(excluded_metal[show_cols].rename(columns={col_issue_dt: 'METAL_ISSUE_DATE'}), 
-                             hide_index=True, use_container_width=True)
-
-            excluded_status = all_cust[all_cust[col_status].isin(exclude)].copy()
-            if not excluded_status.empty:
-                st.markdown("#### 🚫 Rows with HOLD/CANCEL status (excluded from report):")
-                show_cols = [col_cust, col_bag, col_order_type, col_status]
-                show_cols = [c for c in show_cols if c in excluded_status.columns]
-                st.dataframe(excluded_status[show_cols], hide_index=True, use_container_width=True)
-
-            old_mask = (df[col_issue_dt].isna() | (df[col_issue_dt].astype(str).str.strip() == ""))
-            old_pending = all_cust[old_mask & (~all_cust[col_status].isin(exclude))]
-            new_pending = all_cust[all_cust['METAL_PENDING_FLAG'] & (~all_cust[col_status].isin(exclude))]
-
-            st.markdown(f"**Old filter count:** {len(old_pending)}  |  **New filter count:** {len(new_pending)}")
-            if len(new_pending) > len(old_pending):
-                st.success(f"✅ New logic recovers {len(new_pending) - len(old_pending)} additional bags!")
-
-        # ---- MAIN REPORT ----
-        mask = df['METAL_PENDING_FLAG'] & (~df[col_status].isin(exclude))
+        mask = (df[col_issue_dt].isna() | (df[col_issue_dt].astype(str).str.strip() == "")) & (~df[col_status].isin(exclude))
         pending_df = df[mask].copy()
 
         for o_type in ["CUSTOMER", "STOCK"]:
@@ -408,7 +520,7 @@ if df is not None:
                 summary['Metal 18kt'] = summary['Metal 18kt'].apply(std_round)
                 summary['Dia Cts'] = summary['Dia Cts'].map('{:,.2f}'.format)
                 st.table(summary)
-
+                
                 t_bags = sub_data[col_bag].count()
                 t_metal = std_round(sub_data[col_metal].sum())
                 t_dia = sub_data[col_dia].sum()
@@ -425,18 +537,18 @@ if df is not None:
             with st.expander(f"👤 CUSTOMER: {cust}"):
                 cust_data = csr_df[csr_df[col_cust] == cust]
                 summary = cust_data.groupby([col_status, 'Seq']).agg({col_bag: 'count', col_metal: 'sum', col_dia: 'sum'}).reset_index().sort_values('Seq')
-
+                
                 total_row = pd.DataFrame([{
                     col_status: 'TOTAL',
                     col_bag: summary[col_bag].sum(),
                     col_metal: summary[col_metal].sum(),
                     col_dia: summary[col_dia].sum()
                 }])
-
+                
                 final_summary = pd.concat([summary, total_row], ignore_index=True)
                 final_summary['Metal 18kt'] = final_summary[col_metal].apply(std_round)
                 final_summary['Dia Cts'] = final_summary[col_dia].map('{:,.2f}'.format)
-
+                
                 st.dataframe(final_summary[[col_status, col_bag, 'Metal 18kt', 'Dia Cts']].rename(columns={col_status: 'Status', col_bag: 'Bag Qty'}), hide_index=True, use_container_width=True)
 
     elif active_report == "📋 Scope of Work":
@@ -444,7 +556,7 @@ if df is not None:
         issued_mask = df[col_issue_dt].notna() & (df[col_issue_dt].astype(str).str.strip() != "")
         is_cust = df[col_order_type].str.contains("CUSTOMER", case=False, na=False)
         is_stock = df[col_order_type].str.contains("STOCK", case=False, na=False)
-
+        
         def get_report_table(data):
             if data.empty: return None
             grp = data.groupby(col_cust).agg({col_bag: 'count', col_metal: 'sum', col_dia: 'sum'}).reset_index()
@@ -476,7 +588,7 @@ if df is not None:
     elif active_report == "🔍 Bag History Report":
         st.header("🔍 Bag History Report")
         search_bag = st.text_input("Enter Bag Number to Search").strip()
-
+        
         if search_bag:
             match = df[df[col_bag].astype(str).str.upper() == search_bag.upper()]
             if not match.empty:
@@ -496,7 +608,7 @@ if df is not None:
                         st.write(f"**Metal Iss:** {clean_date(r.get(col_issue_dt))}")
                         st.write(f"**Deliv Dt:** {clean_date(r.get('DELIVERY_DATE'))}")
                         st.write(f"**Status:** {r.get(col_status, 'N/A')}")
-
+                
                 with col_img:
                     st.markdown("### 🖼️ Design")
                     img_url = r.get('IMAGE_LINK')
@@ -509,10 +621,10 @@ if df is not None:
                             st.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb_url}" width="100%" style="border-radius:10px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                             st.caption("👆 Click to enlarge")
                     else: st.info("No Image")
-
+                
                 st.divider()
                 st.header("📋 QC Process Report")
-
+                
                 def get_val_flex(prefix):
                     col = next((c for c in match.columns if c.startswith(prefix)), None)
                     if col:
@@ -610,14 +722,14 @@ if df is not None:
             else:
                 st.warning(f"Bag No {search_bag} not found.")
 
-    elif active_report == "💰 Sales Analytics":
+    elif menu == "💰 Sales Analytics":
         st.header("💎 Sales Analytics")
         sdf = fetch_sales_data()
-
+        
         if sdf is not None:
             try:
                 import plotly.express as px
-
+                
                 s_report = pd.DataFrame({
                     'Customer': sdf.iloc[:, 0].astype(str).str.strip(),
                     'Karigar': sdf.iloc[:, 9].astype(str).str.strip(),
@@ -632,10 +744,10 @@ if df is not None:
                 if not s_report.empty:
                     s_report['Month'] = s_report['Date'].dt.strftime('%B')
                     month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-
+                    
                     st.subheader("👥 Customer Sales (Month-wise)")
                     cust_data = s_report.groupby(['Month', 'Customer'], observed=True)['Dia_Cts'].sum().reset_index()
-
+                    
                     fig_cust = px.bar(
                         cust_data, 
                         x="Month", 
@@ -654,7 +766,7 @@ if df is not None:
 
                     st.subheader("⚒️ Karigar Production (Month-wise)")
                     karigar_data = s_report.groupby(['Month', 'Karigar'], observed=True)['Dia_Cts'].sum().reset_index()
-
+                    
                     fig_kari = px.bar(
                         karigar_data, 
                         x="Month", 
