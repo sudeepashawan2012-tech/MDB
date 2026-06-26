@@ -357,15 +357,57 @@ df = fetch_data()
 
 if df is not None:
     # Define shared column names
-    col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
-    col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
+        # --- ROBUST COLUMN DETECTION ---
+    # Show all columns for debugging
+    with st.sidebar.expander("🔍 DEBUG: Sheet Columns Detected"):
+        st.write("All columns in loaded data:", list(df.columns))
+    
+    # Metal column - try multiple patterns
+    col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), None)
+    if not col_metal:
+        col_metal = next((c for c in df.columns if 'METAL' in c and 'WT' in c), None)
+    if not col_metal:
+        col_metal = next((c for c in df.columns if 'METAL' in c), None)
+    if not col_metal:
+        col_metal = 'METAL_18KT_WT'
+        st.sidebar.warning(f"⚠️ Metal column not found. Using fallback. Available: {list(df.columns)}")
+
+    # Status column
+    col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), None)
+    if not col_status:
+        col_status = next((c for c in df.columns if 'STATUS' in c), 'CURRENT_STATUS')
+
+    # Customer column
     col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
+
+    # Order Type column
     col_order_type = next((c for c in df.columns if 'ORDER_TYPE' in c), 'ORDER_TYPE')
+
+    # Bag column
     col_bag = next((c for c in df.columns if 'BAG' in c), 'BAG_NO')
-    col_dia = next((c for c in df.columns if 'DIA' in c and 'CTS' in c), 'DIA_CTS')
+
+    # Diamond column - try multiple patterns
+    col_dia = next((c for c in df.columns if 'DIA' in c and 'CTS' in c), None)
+    if not col_dia:
+        col_dia = next((c for c in df.columns if 'DIA' in c and 'CT' in c), None)
+    if not col_dia:
+        col_dia = next((c for c in df.columns if 'DIA' in c), 'DIA_CTS')
+
+    # Metal Issue Date column
     col_issue_dt = next((c for c in df.columns if 'METAL' in c and 'ISSUE' in c and 'DATE' in c), 'METAL_ISSUE_DATE')
-    df[col_metal] = pd.to_numeric(df[col_metal], errors="coerce").fillna(0)
-    df[col_dia] = pd.to_numeric(df[col_dia], errors="coerce").fillna(0)
+
+    # Safe numeric conversion
+    if col_metal in df.columns:
+        df[col_metal] = pd.to_numeric(df[col_metal], errors="coerce").fillna(0)
+    else:
+        st.sidebar.error(f"❌ Metal column '{col_metal}' NOT FOUND in data. Reports may show 0.")
+        df[col_metal] = 0
+
+    if col_dia in df.columns:
+        df[col_dia] = pd.to_numeric(df[col_dia], errors="coerce").fillna(0)
+    else:
+        st.sidebar.error(f"❌ Dia column '{col_dia}' NOT FOUND in data. Reports may show 0.")
+        df[col_dia] = 0
 
     
     # --- SIDEBAR NAVIGATION ---
