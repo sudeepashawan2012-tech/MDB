@@ -4,6 +4,7 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 from datetime import datetime, timedelta
 import json
+import gspread
 
 
 # ============================================================
@@ -16,11 +17,23 @@ scopes = ["https://www.googleapis.com/auth/bigquery", "https://www.googleapis.co
 creds = service_account.Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
 client = bigquery.Client(credentials=creds, project=creds.project_id)
 
+# --- GOOGLE SHEETS SETUP (for direct refresh) ---
+# Add these to your secrets.toml:
+# [gcp_service_account] ...your existing service account JSON...
+# [sheets]
+# master_inventory_sheet_id = "YOUR_SHEET_ID"
+# master_inventory_sheet_name = "Sheet1"
+# sale_data_sheet_id = "YOUR_SHEET_ID"
+# sale_data_sheet_name = "Sheet1"
+# pre_finish_sheet_id = "YOUR_SHEET_ID"
+# pre_finish_sheet_name = "Sheet1"
+# post_finish_sheet_id = "YOUR_SHEET_ID"
+# post_finish_sheet_name = "Sheet1"
+
 # ============================================================
 # 2. HELPER FUNCTIONS
 # ============================================================
-# 2. HELPER FUNCTIONS (unchanged)
-# ============================================================
+
 def get_drive_direct_link(url):
     try:
         if "id=" in str(url):
@@ -33,8 +46,88 @@ def get_drive_direct_link(url):
     except:
         return None
 
-def refresh_native_tables():
+
+def load_sheet_to_bigquery(sheet_id, sheet_name, bq_table_id):
+    """
+    Reads data directly from Google Sheets and loads it into BigQuery.
+    This BYPASSES any external table sync issues.
+    """
     try:
+        gc = gspread.authorize(creds)
+        worksheet = gc.open_by_key(sheet_id).worksheet(sheet_name)
+        data = worksheet.get_all_records()
+        df = pd.DataFrame(data)
+        
+        # Clean column names
+        df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
+        
+        # Upload to BigQuery (overwrite existing table)
+        job_config = bigquery.LoadJobConfig(
+            write_disposition="WRITE_TRUNCATE",  # Overwrite existing data
+            autodetect=True
+        )
+        job = client.load_table_from_dataframe(df, bq_table_id, job_config=job_config)
+        job.result()  # Wait for job to complete
+        
+        return len(df)
+    except Exception as e:
+        st.sidebar.error(f"Sheets load failed for {bq_table_id}: {e}")
+        return None
+
+
+def refresh_all_data():
+    """
+    MASTER REFRESH FUNCTION:
+    1. Reads fresh data from Google Sheets
+    2. Loads into BigQuery source tables
+    3. Creates/updates _native tables
+    4. Clears all caches
+    """
+    try:
+        # --- STEP 1: Load from Google Sheets directly into source tables ---
+        sheets_config = st.secrets.get("sheets", {})
+        
+        # Master Inventory
+        if "master_inventory_sheet_id" in sheets_config:
+            count = load_sheet_to_bigquery(
+                sheets_config["master_inventory_sheet_id"],
+                sheets_config.get("master_inventory_sheet_name", "Sheet1"),
+                "jewelry-sql-system.workshop_data.master_inventory"
+            )
+            if count:
+                st.sidebar.success(f"✅ Master Inventory: {count} rows loaded")
+        
+        # Sale Data
+        if "sale_data_sheet_id" in sheets_config:
+            count = load_sheet_to_bigquery(
+                sheets_config["sale_data_sheet_id"],
+                sheets_config.get("sale_data_sheet_name", "Sheet1"),
+                "jewelry-sql-system.workshop_data.SALE_DATA"
+            )
+            if count:
+                st.sidebar.success(f"✅ Sale Data: {count} rows loaded")
+        
+        # Pre-Finish Movement
+        if "pre_finish_sheet_id" in sheets_config:
+            count = load_sheet_to_bigquery(
+                sheets_config["pre_finish_sheet_id"],
+                sheets_config.get("pre_finish_sheet_name", "Sheet1"),
+                "jewelry-sql-system.workshop_data.pre_finish_movement"
+            )
+            if count:
+                st.sidebar.success(f"✅ Pre-Finish: {count} rows loaded")
+        
+        # Post-Finish Movement
+        if "post_finish_sheet_id" in sheets_config:
+            count = load_sheet_to_bigquery(
+                sheets_config["post_finish_sheet_id"],
+                sheets_config.get("post_finish_sheet_name", "Sheet1"),
+                "jewelry-sql-system.workshop_data.post_finish_movement"
+            )
+            if count:
+                st.sidebar.success(f"✅ Post-Finish: {count} rows loaded")
+        
+        # --- STEP 2: Create _native copies (for performance) ---
         queries = [
             """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.master_inventory_native` 
                AS SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`""",
@@ -47,10 +140,19 @@ def refresh_native_tables():
         ]
         for q in queries:
             client.query(q).result()
-        st.sidebar.success("All Workshop Data Refreshed!")
+        
+        # --- STEP 3: Clear ALL caches ---
         st.cache_data.clear()
+        
+        # Store refresh timestamp
+        st.session_state["last_refresh"] = datetime.now().strftime("%d-%b-%Y %H:%M:%S")
+        
+        return True
+        
     except Exception as e:
-        st.sidebar.error(f"Refresh Failed: {e}")
+        st.sidebar.error(f"❌ Refresh Failed: {e}")
+        return False
+
 
 @st.cache_data(ttl=300)
 def fetch_data():
@@ -67,6 +169,7 @@ def fetch_data():
         st.error(f"Connection Error: {e}")
         return None
 
+
 @st.cache_data(ttl=300)
 def fetch_sales_data():
     try:
@@ -77,9 +180,11 @@ def fetch_sales_data():
         st.error(f"Sales Data Fetch Error: {e}")
         return None
 
+
 def std_round(x):
     try: return int(float(x) + 0.5) if float(x) > 0 else 0
     except: return 0
+
 
 def clean_date(dt):
     try:
@@ -87,6 +192,7 @@ def clean_date(dt):
         if isinstance(dt, str): dt = pd.to_datetime(dt, dayfirst=True)
         return dt.strftime('%d-%b-%Y')
     except: return str(dt)
+
 
 def add_business_days(start_date, days):
     current = pd.to_datetime(start_date, dayfirst=True).date()
@@ -96,6 +202,7 @@ def add_business_days(start_date, days):
         if current.weekday() != 6:
             added += 1
     return current
+
 
 def count_business_days(start_date, end_date):
     current = pd.to_datetime(start_date, dayfirst=True).date()
@@ -188,7 +295,7 @@ user_perms = st.session_state["user_perms"]
 # Show who is logged in in sidebar
 st.sidebar.markdown(f"### 👤 Logged in as: **{user_role}**")
 if st.sidebar.button("🚪 Logout"):
-    for key in ["user_role", "user_perms", "_selected_role"]:
+    for key in ["user_role", "user_perms", "_selected_role", "last_refresh"]:
         st.session_state.pop(key, None)
     st.rerun()
 
@@ -209,26 +316,41 @@ if df is not None:
     # --- SIDEBAR NAVIGATION ---
     if user_perms["can_view_reports"]:
         st.sidebar.markdown("### 📊 MAIN REPORTS")
-        menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Analytics"], label_visibility="collapsed")
+        menu = st.sidebar.radio("SELECT REPORT", [
+            "📊 Metal Requirements", 
+            "📋 CSR", 
+            "📋 Scope of Work", 
+            "🔍 Bag History Report", 
+            "💰 Sales Analytics"
+        ], label_visibility="collapsed")
     else:
         menu = "📊 Metal Requirements"
 
     active_report = menu
 
     st.sidebar.divider()
-    if st.sidebar.button("🔄 REFRESH MOVEMENT DATA"):
-        with st.sidebar.spinner("Syncing..."):
-            refresh_native_tables()
-            st.cache_data.clear()
-            st.sidebar.success("All Workshop Data Refreshed!")
-            st.rerun()
+    
+    # Show last refresh time
+    last_refresh = st.session_state.get("last_refresh", "Never")
+    st.sidebar.caption(f"🕐 Last refresh: {last_refresh}")
+    st.sidebar.caption(f"📊 Rows loaded: {len(df)}")
 
-    elif active_report == "📊 Metal Requirements":
+    # --- REFRESH BUTTON (separate from report routing) ---
+    if st.sidebar.button("🔄 REFRESH MOVEMENT DATA", type="primary"):
+        with st.sidebar.spinner("Syncing from Google Sheets..."):
+            success = refresh_all_data()
+            if success:
+                st.sidebar.success("✅ All data refreshed from Google Sheets!")
+                st.rerun()
+            else:
+                st.sidebar.error("❌ Refresh failed. Check Sheet IDs in secrets.")
+
+    # --- REPORT ROUTING (clean if/elif chain) ---
+    if active_report == "📊 Metal Requirements":
         st.header("📊 Metal Requirement Report")
         exclude = ["HOLD", "CANCEL"]
 
         # ---- ROBUST METAL ISSUE DATE CHECK ----
-        # Treat NaN, empty, spaces, and common placeholders as "NOT ISSUED"
         def is_metal_pending(val):
             if pd.isna(val):
                 return True
@@ -239,11 +361,10 @@ if df is not None:
 
         df['METAL_PENDING_FLAG'] = df[col_issue_dt].apply(is_metal_pending)
 
-        # ---- DEBUG VIEW (expand to see why rows are filtered) ----
+        # ---- DEBUG VIEW ----
         with st.expander("🔍 DEBUG: Why are some bags missing? Click to see filter details"):
             st.markdown("**Filter Logic:** Metal Issue Date must be blank/placeholder AND Status must NOT be HOLD/CANCEL")
 
-            # Show all customer rows that would be EXCLUDED and why
             all_cust = df[df[col_order_type].str.contains("CUSTOMER", case=False, na=False)].copy()
 
             c1, c2, c3 = st.columns(3)
@@ -251,7 +372,6 @@ if df is not None:
             c2.metric("Metal Pending (new logic)", all_cust['METAL_PENDING_FLAG'].sum())
             c3.metric("Excluded by Status", len(all_cust[all_cust[col_status].isin(exclude)]))
 
-            # Rows that have metal issue date filled (the "missing" ones)
             excluded_metal = all_cust[~all_cust['METAL_PENDING_FLAG']].copy()
             if not excluded_metal.empty:
                 st.markdown("#### ⚠️ Rows with METAL ISSUE DATE filled (excluded from report):")
@@ -260,7 +380,6 @@ if df is not None:
                 st.dataframe(excluded_metal[show_cols].rename(columns={col_issue_dt: 'METAL_ISSUE_DATE'}), 
                              hide_index=True, use_container_width=True)
 
-            # Rows excluded by status
             excluded_status = all_cust[all_cust[col_status].isin(exclude)].copy()
             if not excluded_status.empty:
                 st.markdown("#### 🚫 Rows with HOLD/CANCEL status (excluded from report):")
@@ -268,7 +387,6 @@ if df is not None:
                 show_cols = [c for c in show_cols if c in excluded_status.columns]
                 st.dataframe(excluded_status[show_cols], hide_index=True, use_container_width=True)
 
-            # Compare old vs new filter
             old_mask = (df[col_issue_dt].isna() | (df[col_issue_dt].astype(str).str.strip() == ""))
             old_pending = all_cust[old_mask & (~all_cust[col_status].isin(exclude))]
             new_pending = all_cust[all_cust['METAL_PENDING_FLAG'] & (~all_cust[col_status].isin(exclude))]
@@ -492,7 +610,7 @@ if df is not None:
             else:
                 st.warning(f"Bag No {search_bag} not found.")
 
-    elif menu == "💰 Sales Analytics":
+    elif active_report == "💰 Sales Analytics":
         st.header("💎 Sales Analytics")
         sdf = fetch_sales_data()
 
