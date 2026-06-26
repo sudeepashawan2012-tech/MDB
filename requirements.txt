@@ -2,14 +2,5 @@ streamlit
 pandas
 google-cloud-bigquery
 google-auth
-pandas-gbq
-plotly
-fpdf==1.7.2
-firebase-admin
-gspread
-streamlit
-pandas
-google-cloud-bigquery
-google-auth
 gspread
 plotly
