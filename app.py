@@ -94,86 +94,118 @@ def load_sheet_to_bigquery(sheet_id, sheet_name, bq_table_id):
 
 def refresh_native_tables():
     """
-    1. Pull fresh data from Google Sheets into source tables (master_inventory, SALE_DATA)
-    2. Create/refresh _native copies for all tables
-    3. Clear Streamlit cache
+    Loads fresh data DIRECTLY into _native tables from Google Sheets.
+    Bypasses EXTERNAL source tables entirely.
     """
     try:
         sheets_config = st.secrets.get("sheets", {})
         refresh_count = 0
         
-        # --- STEP 1: Load from Google Sheets (only for tables that are NOT EXTERNAL) ---
-        
-        # Master Inventory
+        # --- MASTER INVENTORY: Load from Sheets directly into _native ---
         if "master_inventory_sheet_id" in sheets_config and sheets_config["master_inventory_sheet_id"]:
-            count = load_sheet_to_bigquery(
-                sheets_config["master_inventory_sheet_id"],
-                sheets_config.get("master_inventory_sheet_name", "Sheet1"),
-                "jewelry-sql-system.workshop_data.master_inventory"
-            )
-            if count:
-                st.sidebar.success(f"Master Inventory: {count} rows")
+            try:
+                gc = gspread.authorize(creds)
+                worksheet = gc.open_by_key(sheets_config["master_inventory_sheet_id"]).worksheet(
+                    sheets_config.get("master_inventory_sheet_name", "Sheet1")
+                )
+                all_values = worksheet.get_all_values()
+                raw_headers = all_values[0]
+                
+                # Clean headers
+                seen = {}
+                clean_headers = []
+                for i, h in enumerate(raw_headers):
+                    h = str(h).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_')
+                    if not h:
+                        h = f"UNNAMED_COL_{i}"
+                    original_h = h
+                    counter = 1
+                    while h in seen:
+                        h = f"{original_h}_DUP{counter}"
+                        counter += 1
+                    seen[h] = True
+                    clean_headers.append(h)
+                
+                df_sheet = pd.DataFrame(all_values[1:], columns=clean_headers)
+                df_sheet = df_sheet.replace({'': None, 'nan': None, 'None': None, 'NaN': None, 'NULL': None, 'N/A': None, 'n/a': None, '-': None, '--': None})
+                for col in df_sheet.select_dtypes(include=['object']).columns:
+                    df_sheet[col] = df_sheet[col].astype(str).replace('None', '')
+                
+                # Write DIRECTLY to _native table (bypassing the EXTERNAL source table)
+                job_config = bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE", autodetect=True)
+                job = client.load_table_from_dataframe(df_sheet, "jewelry-sql-system.workshop_data.master_inventory_native", job_config=job_config)
+                job.result()
+                
+                st.sidebar.success(f"✅ Master Inventory: {len(df_sheet)} rows from Sheets")
                 refresh_count += 1
+            except Exception as e:
+                st.sidebar.error(f"❌ Master Inventory Sheets load failed: {e}")
         
-        # Sale Data
+        # --- SALE DATA: Load from Sheets directly into _native ---
         if "sale_data_sheet_id" in sheets_config and sheets_config["sale_data_sheet_id"]:
-            count = load_sheet_to_bigquery(
-                sheets_config["sale_data_sheet_id"],
-                sheets_config.get("sale_data_sheet_name", "Sheet1"),
-                "jewelry-sql-system.workshop_data.SALE_DATA"
-            )
-            if count:
-                st.sidebar.success(f"Sale Data: {count} rows")
+            try:
+                gc = gspread.authorize(creds)
+                worksheet = gc.open_by_key(sheets_config["sale_data_sheet_id"]).worksheet(
+                    sheets_config.get("sale_data_sheet_name", "Sheet1")
+                )
+                all_values = worksheet.get_all_values()
+                raw_headers = all_values[0]
+                
+                seen = {}
+                clean_headers = []
+                for i, h in enumerate(raw_headers):
+                    h = str(h).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_')
+                    if not h:
+                        h = f"UNNAMED_COL_{i}"
+                    original_h = h
+                    counter = 1
+                    while h in seen:
+                        h = f"{original_h}_DUP{counter}"
+                        counter += 1
+                    seen[h] = True
+                    clean_headers.append(h)
+                
+                df_sheet = pd.DataFrame(all_values[1:], columns=clean_headers)
+                df_sheet = df_sheet.replace({'': None, 'nan': None, 'None': None, 'NaN': None, 'NULL': None, 'N/A': None, 'n/a': None, '-': None, '--': None})
+                for col in df_sheet.select_dtypes(include=['object']).columns:
+                    df_sheet[col] = df_sheet[col].astype(str).replace('None', '')
+                
+                job_config = bigquery.LoadJobConfig(write_displacement="WRITE_TRUNCATE", autodetect=True)
+                job = client.load_table_from_dataframe(df_sheet, "jewelry-sql-system.workshop_data.SALE_DATA_native", job_config=job_config)
+                job.result()
+                
+                st.sidebar.success(f"✅ Sale Data: {len(df_sheet)} rows from Sheets")
                 refresh_count += 1
+            except Exception as e:
+                st.sidebar.error(f"❌ Sale Data Sheets load failed: {e}")
         
-        # Pre-Finish Movement (skip if EXTERNAL)
-        if "pre_finish_sheet_id" in sheets_config and sheets_config["pre_finish_sheet_id"]:
-            count = load_sheet_to_bigquery(
-                sheets_config["pre_finish_sheet_id"],
-                sheets_config.get("pre_finish_sheet_name", "Sheet1"),
-                "jewelry-sql-system.workshop_data.pre_finish_movement"
-            )
-            if count:
-                st.sidebar.success(f"Pre-Finish: {count} rows")
-                refresh_count += 1
-        
-        # Post-Finish Movement (skip if EXTERNAL)
-        if "post_finish_sheet_id" in sheets_config and sheets_config["post_finish_sheet_id"]:
-            count = load_sheet_to_bigquery(
-                sheets_config["post_finish_sheet_id"],
-                sheets_config.get("post_finish_sheet_name", "Sheet1"),
-                "jewelry-sql-system.workshop_data.post_finish_movement"
-            )
-            if count:
-                st.sidebar.success(f"Post-Finish: {count} rows")
-                refresh_count += 1
-        
-        # --- STEP 2: Create _native copies (this works for both regular and EXTERNAL source tables) ---
-        queries = [
-            """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.master_inventory_native` 
-               AS SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory`""",
+        # --- PRE-FINISH & POST-FINISH: Refresh from EXTERNAL source (no Sheets needed) ---
+        # These are EXTERNAL tables linked to workshop scanning — just refresh their native copies
+        try:
+            client.query("""CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.pre_finish_movement_native` 
+               CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement`""").result()
+            st.sidebar.success("✅ Pre-Finish native refreshed")
+        except Exception as e:
+            st.sidebar.info(f"ℹ️ Pre-Finish: {e}")
             
-            """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.SALE_DATA_native` 
-               AS SELECT * FROM `jewelry-sql-system.workshop_data.SALE_DATA`""",
-            
-            """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.pre_finish_movement_native` 
-               CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.pre_finish_movement`""",
-            
-            """CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.post_finish_movement_native` 
-               CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement`"""
-        ]
-        for q in queries:
-            client.query(q).result()
+        try:
+            client.query("""CREATE OR REPLACE TABLE `jewelry-sql-system.workshop_data.post_finish_movement_native` 
+               CLUSTER BY BAG_NO AS SELECT * FROM `jewelry-sql-system.workshop_data.post_finish_movement`""").result()
+            st.sidebar.success("✅ Post-Finish native refreshed")
+        except Exception as e:
+            st.sidebar.info(f"ℹ️ Post-Finish: {e}")
         
-        st.sidebar.success("All Workshop Data Refreshed!")
+        # Clear cache and store timestamp
         st.cache_data.clear()
-        
-        # Store refresh timestamp
         st.session_state["last_refresh"] = datetime.now().strftime("%d-%b-%Y %H:%M:%S")
         
+        if refresh_count == 0:
+            st.sidebar.warning("⚠️ No Sheet IDs configured. Add them to secrets.toml")
+        else:
+            st.sidebar.success("🔄 Refresh complete! Reports now show latest data.")
+            
     except Exception as e:
-        st.sidebar.error(f"Refresh Failed: {e}")
-
+        st.sidebar.error(f"❌ Refresh Failed: {e}")
 
 @st.cache_data(ttl=300)
 def fetch_data():
