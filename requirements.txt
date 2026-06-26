@@ -6,3 +6,4 @@ pandas-gbq
 plotly
 fpdf==1.7.2
 firebase-admin
+gspread
