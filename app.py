@@ -42,7 +42,11 @@ def refresh_native_tables():
         for q in queries:
             client.query(q).result()
         st.sidebar.success("All Workshop Data Refreshed!")
+        
+        # CLEAR CACHE AND RERUN THE APP TO SHOW FRESH DATA
         st.cache_data.clear()
+        st.rerun() 
+        
     except Exception as e:
         st.sidebar.error(f"Refresh Failed: {e}")
 
