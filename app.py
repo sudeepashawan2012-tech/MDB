@@ -98,15 +98,22 @@ else:
     df = fetch_data()
 
     if df is not None:
-        # Define shared column names
-        col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
+        # Smarter column detection
+        col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 
+                    next((c for c in df.columns if 'METAL' in c and 'COLOUR' not in c and 'ISSUE' not in c and 'DELAY' not in c), 'METAL'))
+        
         col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
         col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
         col_order_type = next((c for c in df.columns if 'ORDER_TYPE' in c), 'ORDER_TYPE')
         col_bag = next((c for c in df.columns if 'BAG' in c), 'BAG_NO')
         col_dia = next((c for c in df.columns if 'DIA' in c and 'CTS' in c), 'DIA_CTS')
-        col_issue_dt = next((c for c in df.columns if 'METAL' in c and 'ISSUE' in c and 'DATE' in c), 'METAL_ISSUE_DATE')
+        col_issue_dt = next((c for c in df.columns if 'METAL' in c and 'ISSUE' in c), 'METAL_ISSUE_DATE')
 
+        # CRASH PREVENTION: If the column completely vanished from BigQuery, create a dummy one so the app still loads
+        if col_metal not in df.columns: df[col_metal] = 0
+        if col_dia not in df.columns: df[col_dia] = 0
+
+        # Convert to numeric safely
         df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
         df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
 
