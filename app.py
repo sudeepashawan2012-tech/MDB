@@ -94,14 +94,33 @@ else:
     df = fetch_data()
 
     if df is not None:
-        # Define shared column names
-        col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 'METAL_18KT_WT')
-        col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
-        col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
-        col_order_type = next((c for c in df.columns if 'ORDER_TYPE' in c), 'ORDER_TYPE')
-        col_bag = next((c for c in df.columns if 'BAG' in c), 'BAG_NO')
-        col_dia = next((c for c in df.columns if 'DIA' in c and 'CTS' in c), 'DIA_CTS')
-        col_issue_dt = next((c for c in df.columns if 'METAL' in c and 'ISSUE' in c and 'DATE' in c), 'METAL_ISSUE_DATE')
+        # FIXED: Changed all hardcoded defaults to None and added validation
+        col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), None)
+        col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), None)
+        col_cust = next((c for c in df.columns if 'CUSTOMER' in c), None)
+        col_order_type = next((c for c in df.columns if 'ORDER_TYPE' in c), None)
+        col_bag = next((c for c in df.columns if 'BAG' in c), None)
+        col_dia = next((c for c in df.columns if 'DIA' in c and 'CTS' in c), None)
+        col_issue_dt = next((c for c in df.columns if 'METAL' in c and 'ISSUE' in c and 'DATE' in c), None)
+
+        # Validate required columns exist
+        required_cols = {
+            'Metal Weight (18KT)': col_metal,
+            'Status': col_status,
+            'Customer': col_cust,
+            'Order Type': col_order_type,
+            'Bag No': col_bag,
+            'Diamond Cts': col_dia,
+            'Metal Issue Date': col_issue_dt
+        }
+        missing = [name for name, col in required_cols.items() if col is None or col not in df.columns]
+        if missing:
+            st.error("❌ **Missing Required Columns**")
+            st.error(f"The following columns could not be detected: {', '.join(missing)}")
+            st.write("**Available columns in your BigQuery table:**")
+            st.write(sorted(df.columns.tolist()))
+            st.info("💡 The BigQuery table schema may have changed. Please verify column names match the expected patterns.")
+            st.stop()
 
         df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
         df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
@@ -127,10 +146,17 @@ else:
             st.header("🕒 CAD Delay Report (Stock Orders)")
             st.info("Stock Orders: CAD is pending (> 5 days) AND Metal Issue is pending.")
             
-            # Logic:
-            # 1. Order Type = STOCK
-            # 2. CAD is blank
-            # 3. METAL ISSUE DATE is blank
+            # FIXED: Added safety checks for required columns in this report
+            if 'CAD' not in df.columns:
+                st.error("❌ 'CAD' column not found. Cannot run CAD Delay Report.")
+                st.stop()
+            if 'ORDER_DATE' not in df.columns:
+                st.error("❌ 'ORDER_DATE' column not found.")
+                st.stop()
+            if 'KARIGAR' not in df.columns:
+                st.error("❌ 'KARIGAR' column not found.")
+                st.stop()
+            
             cad_df = df.copy()
             cad_df['ORDER_DATE_DT'] = pd.to_datetime(cad_df['ORDER_DATE'], dayfirst=True, errors='coerce')
             
@@ -142,11 +168,9 @@ else:
             today = datetime.now()
             delay_data['CAD_DELAY'] = (today - delay_data['ORDER_DATE_DT']).dt.days
             
-            # Filter for > 5 Days Delay
             final_delay = delay_data[delay_data['CAD_DELAY'] > 5].sort_values('CAD_DELAY', ascending=False)
             
             if not final_delay.empty:
-                # --- FILTERING OPTIONS ---
                 st.write("#### 🔍 Filter Results")
                 f1, f2, f3 = st.columns(3)
                 
@@ -155,15 +179,13 @@ else:
                 with f2:
                     sel_karigar = st.multiselect("Filter by Karigar", sorted(final_delay['KARIGAR'].astype(str).unique()))
                 with f3:
-                    # Date Selector with DD/MM/YYYY logic
                     min_date = final_delay['ORDER_DATE_DT'].min().date()
                     max_date = final_delay['ORDER_DATE_DT'].max().date()
                     date_range = st.date_input(
                         "Filter by Order Date (DD/MM/YYYY)", 
                         [min_date, max_date],
-                        format="DD/MM/YYYY" # This forces the display format
+                        format="DD/MM/YYYY"
                     )
-                # Apply Filters
                 if sel_cust:
                     final_delay = final_delay[final_delay[col_cust].isin(sel_cust)]
                 if sel_karigar:
@@ -172,8 +194,6 @@ else:
                     final_delay = final_delay[(final_delay['ORDER_DATE_DT'].dt.date >= date_range[0]) & 
                                               (final_delay['ORDER_DATE_DT'].dt.date <= date_range[1])]
 
-                # --- DISPLAY ---
-                # Added BAG NO to column layout
                 h1, h2, h3, h4, h5, h6, h7 = st.columns([1.2, 1, 1.2, 1, 0.8, 1, 1.5])
                 h1.markdown("**Customer**")    
                 h2.markdown("**Order Date**")
@@ -188,12 +208,11 @@ else:
                     c1, c2, c3, c4, c5, c6, c7 = st.columns([1.2, 1, 1.2, 1, 0.8, 1, 1.5])
                     c1.write(row[col_cust])
                     c2.write(clean_date(row['ORDER_DATE']))
-                    c3.write(f"**{row[col_bag]}**") # BAG NO in Column E logic
+                    c3.write(f"**{row[col_bag]}**")
                     c4.write(row[col_order_type])
                     c5.write(f"⚠️ {int(row['CAD_DELAY'])} Days")
                     c6.write(row.get('KARIGAR', '---'))
                     
-                    # Image Logic
                     img_url = row.get('IMAGE_LINK')
                     if img_url and str(img_url).strip() not in ["", "---", "None"]:
                         file_id = None
@@ -210,19 +229,26 @@ else:
             else:
                 st.success("✅ No CAD delays found with current criteria.")
 
-# --- NEW REPORT: GHAT DELAY REPORT ---
         elif active_report == "🕒 Ghat Delay Report":
             st.header("🕒 Ghat Delay Report")
             st.info("Logic: Metal Issued but Dia Not Issued. Delay > 5 days (Small <= 5cts) or > 9 days (Big > 5cts).")
             
-            # 1. Prepare Data
             ghat_df = df.copy()
             ghat_df['METAL_ISSUE_DT'] = pd.to_datetime(ghat_df[col_issue_dt], dayfirst=True, errors='coerce')
             
-            # Define Column for Diamond Issue
-            col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), 'DIA_ISSUE_DATE')
+            # FIXED: Changed hardcoded default to None and added validation
+            col_dia_issue = next((c for c in df.columns if 'DIA' in c and 'ISSUE' in c and 'DATE' in c and '2ND' not in c), None)
             
-            # 2. Filtering Logic: Metal Issued is NOT blank AND Diamond Issued IS blank
+            if col_dia_issue is None or col_dia_issue not in df.columns:
+                st.error("❌ 'DIA_ISSUE_DATE' column not found. Cannot run Ghat Delay Report.")
+                st.stop()
+            if 'KARIGAR' not in ghat_df.columns:
+                st.error("❌ 'KARIGAR' column not found.")
+                st.stop()
+            if 'ORDER_DATE' not in ghat_df.columns:
+                st.error("❌ 'ORDER_DATE' column not found.")
+                st.stop()
+            
             mask = (ghat_df['METAL_ISSUE_DT'].notna()) & \
                    (ghat_df[col_dia_issue].isna() | (ghat_df[col_dia_issue].astype(str).str.strip() == ""))
             
@@ -230,13 +256,11 @@ else:
             today = datetime.now()
             ghat_delay['DELAY_DAYS'] = (today - ghat_delay['METAL_ISSUE_DT']).dt.days
             
-            # 3. Size Logic (Small <= 5cts, Big > 5cts)
             small_p_mask = (ghat_delay[col_dia] <= 5) & (ghat_delay['DELAY_DAYS'] > 5)
             big_p_mask = (ghat_delay[col_dia] > 5) & (ghat_delay['DELAY_DAYS'] > 9)
             final_ghat = ghat_delay[small_p_mask | big_p_mask].sort_values('DELAY_DAYS', ascending=False)
 
             if not final_ghat.empty:
-                # --- FILTERING OPTIONS ---
                 st.write("#### 🔍 Filter Results")
                 f1, f2, f3, f4 = st.columns(4)
                 
@@ -247,23 +271,20 @@ else:
                 with f3:
                     sel_otype = st.multiselect("Filter by Order Type", sorted(final_ghat[col_order_type].unique()))
                 with f4:
-                    # Date Selector with DD/MM/YYYY logic
                     min_d = final_ghat['METAL_ISSUE_DT'].min().date()
                     max_d = final_ghat['METAL_ISSUE_DT'].max().date()
                     date_range = st.date_input(
                         "Metal Issue Date (DD/MM/YYYY)", 
                         [min_d, max_d],
-                        format="DD/MM/YYYY" # This forces the display format
+                        format="DD/MM/YYYY"
                     )
 
-                # Applying UI filters
                 if sel_cust: final_ghat = final_ghat[final_ghat[col_cust].isin(sel_cust)]
                 if sel_karigar: final_ghat = final_ghat[final_ghat['KARIGAR'].astype(str).isin(sel_karigar)]
                 if sel_otype: final_ghat = final_ghat[final_ghat[col_order_type].isin(sel_otype)]
                 if len(date_range) == 2:
                     final_ghat = final_ghat[(final_ghat['METAL_ISSUE_DT'].dt.date >= date_range[0]) & (final_ghat['METAL_ISSUE_DT'].dt.date <= date_range[1])]
 
-                # 5. Display Table
                 cols = st.columns([1, 1.2, 1, 1.2, 0.8, 1, 1.5])
                 headers = ["Customer", "Order Date", "Bag No", "Metal Issue", "Delay", "Karigar", "Design"]
                 for col, text in zip(cols, headers): col.markdown(f"**{text}**")
@@ -283,12 +304,11 @@ else:
                         file_id = str(img_url).split("id=")[1].split("&")[0] if "id=" in str(img_url) else (str(img_url).split("d/")[1].split("/")[0] if "d/" in str(img_url) else None)
                         if file_id:
                             thumb = f"https://lh3.googleusercontent.com/u/0/d/{file_id}"
-                            c7.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
+                            c6.markdown(f'<a href="{img_url}" target="_blank"><img src="{thumb}" width="80px" style="border-radius:5px; border:1px solid #4F4F4F;"></a>', unsafe_allow_html=True)
                     st.divider()
             else:
                 st.success("✅ No Ghat delays detected.")
 
-        # --- OTHER REPORTS (REST UNCHANGED) ---
         elif active_report == "📊 Metal Requirements":
             st.header("📊 Metal Requirement Report")
             exclude = ["HOLD", "CANCEL"]
@@ -458,7 +478,7 @@ else:
                             query = f"SELECT * FROM `jewelry-sql-system.workshop_data.{table_id}` WHERE CAST(BAG_NO AS STRING) = '{search_bag}'"
                             m_df = client.query(query).to_dataframe()
                             if m_df.empty: return m_df
-                            m_df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in m_df.columns]
+                            m_df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in m_df.columns]
                             date_col = next((c for c in m_df.columns if 'DATE' in c), None)
                             time_col = next((c for c in m_df.columns if 'TIME' in c), None)
                             if date_col:
@@ -506,8 +526,8 @@ else:
                 else:
                     st.warning(f"Bag No {search_bag} not found.")
 
-               # --- REPORT 4: SALES Analytics (Interactive Bar Graphs - Dia Cts) ---
-        elif menu == "💰 Sales Analytics":
+        # FIXED: Changed 'elif menu' to 'elif active_report' for correct routing
+        elif active_report == "💰 Sales Analytics":
             st.header("💎 Sales Analytics")
             sdf = fetch_sales_data()
             
@@ -515,25 +535,21 @@ else:
                 try:
                     import plotly.express as px
                     
-                    # 1. Data Prep (A=Cust, J=Karigar, L=Dia Cts, T=Date)
                     s_report = pd.DataFrame({
                         'Customer': sdf.iloc[:, 0].astype(str).str.strip(),
-                        'Karigar': sdf.iloc[:, 9].astype(str).str.strip(), # Column J (Index 9)
-                        'Dia_Cts': pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0), # Column L (Index 11)
+                        'Karigar': sdf.iloc[:, 9].astype(str).str.strip(),
+                        'Dia_Cts': pd.to_numeric(sdf.iloc[:, 11], errors='coerce').fillna(0),
                         'Date': pd.to_datetime(sdf.iloc[:, 19], dayfirst=True, errors='coerce')
                     })
 
-                    # Clean Ghost Rows & filter for 2026
                     s_report = s_report.dropna(subset=['Date'])
                     s_report = s_report[s_report['Date'].dt.year == 2026]
                     s_report = s_report[~s_report['Customer'].isin(["None", "nan", ""])]
 
                     if not s_report.empty:
-                        # Prepare Months for X-axis
                         s_report['Month'] = s_report['Date'].dt.strftime('%B')
                         month_order = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
                         
-                        # --- GRAPH 1: CUSTOMER DIA SALE (BAR) ---
                         st.subheader("👥 Customer Sales (Month-wise)")
                         cust_data = s_report.groupby(['Month', 'Customer'], observed=True)['Dia_Cts'].sum().reset_index()
                         
@@ -542,18 +558,16 @@ else:
                             x="Month", 
                             y="Dia_Cts", 
                             color="Customer",
-                            barmode="group", # Side-by-side bars
-                            text_auto='.2f', # Show 2 decimal places on top of bars
+                            barmode="group",
+                            text_auto='.2f',
                             category_orders={"Month": month_order},
-                            template="plotly_dark",
-                            animation_frame=None # You can add "Month" here if you want a play button!
+                            template="plotly_dark"
                         )
                         fig_cust.update_layout(yaxis_title="Diamond Cts", xaxis_title="")
                         st.plotly_chart(fig_cust, use_container_width=True)
 
                         st.divider()
 
-                        # --- GRAPH 2: KARIGAR DIA PRODUCTION (BAR) ---
                         st.subheader("⚒️ Karigar Production (Month-wise)")
                         karigar_data = s_report.groupby(['Month', 'Karigar'], observed=True)['Dia_Cts'].sum().reset_index()
                         
@@ -572,7 +586,6 @@ else:
 
                         st.divider()
 
-                        # --- MONTHLY DETAIL TABLES ---
                         st.subheader("📋 Monthly Detailed Breakdown")
                         s_report['Month_Year'] = s_report['Date'].dt.strftime('%b-%y')
                         unique_months = s_report.sort_values('Date', ascending=False)['Month_Year'].unique()
@@ -581,7 +594,6 @@ else:
                             with st.expander(f"📅 Details for {month}"):
                                 m_data = s_report[s_report['Month_Year'] == month]
                                 summary = m_data.groupby('Customer').agg({'Dia_Cts': 'sum'}).reset_index()
-                                # Add TOTAL Row
                                 t_row = pd.DataFrame([{'Customer': 'TOTAL', 'Dia_Cts': summary['Dia_Cts'].sum()}])
                                 final = pd.concat([summary, t_row], ignore_index=True)
                                 final['Dia cts'] = final['Dia_Cts'].map('{:,.2f}'.format)
