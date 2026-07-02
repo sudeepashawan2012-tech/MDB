@@ -4,3 +4,4 @@ google-cloud-bigquery
 google-auth
 gspread
 plotly
+db-dtypes
