@@ -98,32 +98,31 @@ else:
     df = fetch_data()
 
     if df is not None:
-        # 1. Smarter column detection for ALL critical columns
-        col_metal = next((c for c in df.columns if 'METAL' in c and '18' in c and 'WT' in c), 
-                    next((c for c in df.columns if 'METAL' in c and 'COLOUR' not in c and 'ISSUE' not in c and 'DELAY' not in c), 'METAL'))
+        # EXACT COLUMN MAPPING based on your actual Master Database structure
+        # No guessing, no overwriting data.
+        col_metal = 'METAL'
+        col_status = 'FINAL_STATUS'
+        col_cust = 'CUSTOMER'
+        col_order_type = 'ORDER_TYPE'
+        col_bag = 'VZ_BAG_NO'
+        col_dia = 'DIA_CTS'
         
-        col_status = next((c for c in df.columns if 'STATUS' in c and 'DATE' not in c), 'CURRENT_STATUS')
-        col_cust = next((c for c in df.columns if 'CUSTOMER' in c), 'CUSTOMER')
+        # Your CSV has both "METAL ISSUE " and "METAL ISSUED". 
+        # This safely checks which one BigQuery is passing to Streamlit.
+        if 'METAL_ISSUE_' in df.columns:
+            col_issue_dt = 'METAL_ISSUE_'
+        elif 'METAL_ISSUED' in df.columns:
+            col_issue_dt = 'METAL_ISSUED'
+        else:
+            col_issue_dt = next((c for c in df.columns if 'ISSUE' in c and 'METAL' in c), 'METAL_ISSUED')
+
+        # Convert weights to numeric SAFELY. 
+        # It only converts if the column exists, it does NOT overwrite missing columns.
+        if col_metal in df.columns:
+            df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
+        if col_dia in df.columns:
+            df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
         
-        # Expanded search to catch variations like "CUST_ORD_TYPE" or "VZ BAG NO"
-        col_order_type = next((c for c in df.columns if 'ORDER_TYPE' in c or 'ORD_TYPE' in c or 'TYPE' in c), 'ORDER_TYPE')
-        col_bag = next((c for c in df.columns if 'BAG' in c), 'BAG_NO')
-        col_dia = next((c for c in df.columns if 'DIA' in c and 'CTS' in c), 'DIA_CTS')
-        col_issue_dt = next((c for c in df.columns if 'METAL' in c and 'ISSUE' in c), 'METAL_ISSUE_DATE')
-
-        # 2. ABSOLUTE CRASH PREVENTION (The ultimate safety net)
-        # If the app can't find a column, it creates a fallback so your reports still load!
-        if col_metal not in df.columns: df[col_metal] = 0.0
-        if col_dia not in df.columns: df[col_dia] = 0.0
-        if col_status not in df.columns: df[col_status] = "UNKNOWN"
-        if col_cust not in df.columns: df[col_cust] = "UNKNOWN"
-        if col_order_type not in df.columns: df[col_order_type] = "CUSTOMER"
-        if col_bag not in df.columns: df[col_bag] = "N/A"
-        if col_issue_dt not in df.columns: df[col_issue_dt] = None
-
-        # 3. Convert to numeric safely
-        df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
-        df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
         # --- SIDEBAR NAVIGATION ---
         st.sidebar.markdown("### 📊 MAIN REPORTS")
         menu = st.sidebar.radio("SELECT REPORT", ["📊 Metal Requirements", "📋 CSR", "📋 Scope of Work", "🔍 Bag History Report", "💰 Sales Analytics"], label_visibility="collapsed")
