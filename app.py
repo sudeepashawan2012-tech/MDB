@@ -98,30 +98,36 @@ else:
     df = fetch_data()
 
     if df is not None:
-        # EXACT COLUMN MAPPING based on your actual Master Database structure
-        # No guessing, no overwriting data.
-        col_metal = 'METAL'
-        col_status = 'FINAL_STATUS'
-        col_cust = 'CUSTOMER'
-        col_order_type = 'ORDER_TYPE'
-        col_bag = 'VZ_BAG_NO'
-        col_dia = 'DIA_CTS'
-        
-        # Your CSV has both "METAL ISSUE " and "METAL ISSUED". 
-        # This safely checks which one BigQuery is passing to Streamlit.
-        if 'METAL_ISSUE_' in df.columns:
-            col_issue_dt = 'METAL_ISSUE_'
-        elif 'METAL_ISSUED' in df.columns:
-            col_issue_dt = 'METAL_ISSUED'
-        else:
-            col_issue_dt = next((c for c in df.columns if 'ISSUE' in c and 'METAL' in c), 'METAL_ISSUED')
+        # HELPER: Dynamically finds the true column name in your live BigQuery table
+        def find_real_col(keywords):
+            for col in df.columns:
+                # Check if all keywords exist in the column name (e.g., 'ORDER' and 'TYPE')
+                if all(kw in col for kw in keywords):
+                    return col
+            return None
 
-        # Convert weights to numeric SAFELY. 
-        # It only converts if the column exists, it does NOT overwrite missing columns.
-        if col_metal in df.columns:
-            df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
-        if col_dia in df.columns:
-            df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
+        # Smartly map columns based on what ACTUALLY exists in BigQuery today
+        col_metal = find_real_col(['METAL']) or 'METAL'
+        col_status = find_real_col(['FINAL', 'STATUS']) or find_real_col(['STATUS']) or 'FINAL_STATUS'
+        col_cust = find_real_col(['CUSTOMER']) or 'CUSTOMER'
+        col_order_type = find_real_col(['ORDER', 'TYPE']) or find_real_col(['ORD', 'TYPE']) or 'ORDER_TYPE'
+        col_bag = find_real_col(['BAG']) or 'BAG_NO'
+        col_dia = find_real_col(['DIA', 'CTS']) or 'DIA_CTS'
+        col_issue_dt = find_real_col(['METAL', 'ISSUE']) or 'METAL_ISSUE'
+
+        # VISUAL DEBUGGER: Prevent crashes and show exactly what's wrong
+        required_cols = [col_metal, col_status, col_cust, col_order_type, col_bag, col_dia, col_issue_dt]
+        missing = [c for c in required_cols if c not in df.columns]
+        
+        if missing:
+            st.error(f"🚨 Streamlit cannot find these columns in BigQuery: {missing}")
+            st.warning("BigQuery might have renamed them to prevent duplicates (e.g., added '_1'). Here are the EXACT columns BigQuery is currently seeing:")
+            st.write(df.columns.tolist())
+            st.stop() # This halts the app cleanly instead of throwing a massive red KeyError
+
+        # Convert weights safely
+        df[col_metal] = pd.to_numeric(df[col_metal], errors='coerce').fillna(0)
+        df[col_dia] = pd.to_numeric(df[col_dia], errors='coerce').fillna(0)
         
         # --- SIDEBAR NAVIGATION ---
         st.sidebar.markdown("### 📊 MAIN REPORTS")
