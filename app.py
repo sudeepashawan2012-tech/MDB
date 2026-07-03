@@ -10,7 +10,7 @@ from datetime import datetime
 COL_CUSTOMER = 'CUSTOMER'
 COL_ORDER_DATE = 'ORDER_DATE'
 COL_ORDER_TYPE = 'ORDER_TYPE'
-COL_STATUS = 'VZ STATUS'              # <-- CHANGE THIS if status is in a different column
+COL_STATUS = 'FORM'              # <-- CHANGE THIS if status is in a different column
 COL_BAG_NO = 'BAG_NO'
 COL_STYLE_NO = 'STYLE_NO'
 COL_ITEM = 'ITEM'
@@ -27,12 +27,6 @@ COL_IGI_SGL = 'IGI_SGL'
 COL_FINISH_DATE = 'FINISH_DATE'
 COL_DELIVERY = 'DELIVERY'
 COL_DELIVERY_DATE = 'DELIVERY_DATE'
-
-# Sales table column config (will auto-detect or fall back)
-SALES_COL_CUSTOMER = None       # Auto-detect
-SALES_COL_KARIGAR = None        # Auto-detect
-SALES_COL_DIA_CTS = None        # Auto-detect
-SALES_COL_DATE = None           # Auto-detect
 
 # ═══════════════════════════════════════════════════════════════
 # 1. INITIAL SETUP & CLIENT DEFINITION
@@ -498,43 +492,37 @@ else:
                 st.error("Could not fetch sales data.")
                 st.stop()
             
-            # Auto-detect sales columns
+            # Auto-detect sales columns — using local variables (no global declaration needed)
             sales_cols = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in sdf.columns]
             sdf.columns = sales_cols
             
-            global SALES_COL_CUSTOMER, SALES_COL_KARIGAR, SALES_COL_DIA_CTS, SALES_COL_DATE
+            _sales_customer = next((c for c in sales_cols if 'CUSTOMER' in c and 'DETAIL' not in c and 'SECTION' not in c), None)
+            if _sales_customer is None:
+                _sales_customer = next((c for c in sales_cols if 'CUST' in c), None)
             
-            if SALES_COL_CUSTOMER is None:
-                SALES_COL_CUSTOMER = next((c for c in sales_cols if 'CUSTOMER' in c and 'DETAIL' not in c and 'SECTION' not in c), None)
-            if SALES_COL_KARIGAR is None:
-                SALES_COL_KARIGAR = next((c for c in sales_cols if 'KARIGAR' in c), None)
-            if SALES_COL_DIA_CTS is None:
-                SALES_COL_DIA_CTS = next((c for c in sales_cols if 'DIA' in c and ('CTS' in c or 'CARAT' in c or 'CT' in c)), None)
-            if SALES_COL_DATE is None:
-                SALES_COL_DATE = next((c for c in sales_cols if 'DATE' in c and 'ISSUE' not in c and 'DOD' not in c and 'FINISH' not in c and 'DELIVERY' not in c), None)
+            _sales_karigar = next((c for c in sales_cols if 'KARIGAR' in c), None)
             
-            # If still not found, try common alternatives
-            if SALES_COL_CUSTOMER is None:
-                SALES_COL_CUSTOMER = next((c for c in sales_cols if 'CUST' in c), None)
-            if SALES_COL_DIA_CTS is None:
-                # Try numeric columns that might be diamond cts
+            _sales_dia = next((c for c in sales_cols if 'DIA' in c and ('CTS' in c or 'CARAT' in c or 'CT' in c)), None)
+            if _sales_dia is None:
                 for c in sales_cols:
                     if 'DIA' in c or 'DIAMOND' in c:
                         try:
                             if pd.to_numeric(sdf[c], errors='coerce').notna().sum() > len(sdf) * 0.5:
-                                SALES_COL_DIA_CTS = c
+                                _sales_dia = c
                                 break
                         except:
                             pass
-            if SALES_COL_DATE is None:
-                SALES_COL_DATE = next((c for c in sales_cols if 'DATE' in c), None)
+            
+            _sales_date = next((c for c in sales_cols if 'DATE' in c and 'ISSUE' not in c and 'DOD' not in c and 'FINISH' not in c and 'DELIVERY' not in c), None)
+            if _sales_date is None:
+                _sales_date = next((c for c in sales_cols if 'DATE' in c), None)
             
             # Show what we detected
             detected = {
-                'Customer': SALES_COL_CUSTOMER,
-                'Karigar': SALES_COL_KARIGAR,
-                'Diamond Cts': SALES_COL_DIA_CTS,
-                'Date': SALES_COL_DATE
+                'Customer': _sales_customer,
+                'Karigar': _sales_karigar,
+                'Diamond Cts': _sales_dia,
+                'Date': _sales_date
             }
             
             missing_sales = [k for k, v in detected.items() if v is None or v not in sales_cols]
@@ -544,7 +532,7 @@ else:
                 st.error(f"Missing: {', '.join(missing_sales)}")
                 st.write("**Available columns:**")
                 st.code(", ".join(sales_cols))
-                st.info("Please specify the column names in the SALES_COL_* variables at the top of the code, or share a sample of your sales data.")
+                st.info("Please check your SALE_DATA_native table schema.")
                 st.stop()
             
             st.success(f"✅ Auto-detected columns: {detected}")
@@ -553,10 +541,10 @@ else:
                 import plotly.express as px
                 
                 s_report = pd.DataFrame({
-                    'Customer': sdf[SALES_COL_CUSTOMER].astype(str).str.strip(),
-                    'Karigar': sdf[SALES_COL_KARIGAR].astype(str).str.strip() if SALES_COL_KARIGAR else 'Unknown',
-                    'Dia_Cts': pd.to_numeric(sdf[SALES_COL_DIA_CTS], errors='coerce').fillna(0),
-                    'Date': pd.to_datetime(sdf[SALES_COL_DATE], dayfirst=True, errors='coerce')
+                    'Customer': sdf[_sales_customer].astype(str).str.strip(),
+                    'Karigar': sdf[_sales_karigar].astype(str).str.strip() if _sales_karigar else 'Unknown',
+                    'Dia_Cts': pd.to_numeric(sdf[_sales_dia], errors='coerce').fillna(0),
+                    'Date': pd.to_datetime(sdf[_sales_date], dayfirst=True, errors='coerce')
                 })
 
                 s_report = s_report.dropna(subset=['Date'])
