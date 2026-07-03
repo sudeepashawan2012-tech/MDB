@@ -5,28 +5,56 @@ from google.oauth2 import service_account
 from datetime import datetime
 
 # ═══════════════════════════════════════════════════════════════
-# COLUMN CONFIGURATION — Update if your schema changes
+# COLUMN CONFIGURATION — Exact names from your BigQuery schema
 # ═══════════════════════════════════════════════════════════════
 COL_CUSTOMER = 'CUSTOMER'
 COL_ORDER_DATE = 'ORDER_DATE'
 COL_ORDER_TYPE = 'ORDER_TYPE'
-COL_STATUS = 'FORM'              # <-- CHANGE THIS if status is in a different column
+COL_FORM = 'FORM_'                    # Form/Color column
+COL_STATUS = 'CURRENT_STATUS'         # ✅ Actual status column
 COL_BAG_NO = 'BAG_NO'
 COL_STYLE_NO = 'STYLE_NO'
-COL_ITEM = 'ITEM'
-COL_IMAGE = 'IMAGE'
-COL_CAD_LINK = 'CAD_LINK'
+COL_PRODUCT_CODE = 'PRODUCT_CODE'     # Was ITEM before
+COL_IMAGE_LINK = 'IMAGE_LINK'         # Main image column
+COL_IMAGE = 'IMAGE'                   # Secondary image
+COL_CAD = 'CAD'
 COL_KARIGAR = 'KARIGAR'
-COL_METAL_18KT = 'METAL_18KT'
+COL_METAL_COLOUR = 'METAL_COLOUR'
+COL_CUST_ORD_NO = 'CUST_ORD_NO'
+COL_CUST_ORD_TYPE = 'CUST_ORD_TYPE'
+COL_PRIORITY = 'PRIORITY'
+COL_METAL_18KT = 'METAL_18KT_WT'      # ✅ Correct metal weight column
 COL_DIA_CTS = 'DIA_CTS'
 COL_METAL_ISSUE_DATE = 'METAL_ISSUE_DATE'
 COL_DIA_ISSUE_DATE = 'DIA_ISSUE_DATE'
+COL_DIA_2ND_ISSUE_DATE = 'DIA_2ND_ISSUE_DATE'
 COL_KARIGAR_DOD = 'KARIGAR_DOD'
-COL_ESTIMATED_DOD = 'ESTIMATED_DOD'
-COL_IGI_SGL = 'IGI_SGL'
-COL_FINISH_DATE = 'FINISH_DATE'
-COL_DELIVERY = 'DELIVERY'
 COL_DELIVERY_DATE = 'DELIVERY_DATE'
+COL_IGI = 'IGI'
+COL_GHAT_QC = 'GHAT_QC______'
+COL_GHAT_WT = 'GHAT_WT______'
+COL_GHAT_REMARK = 'REMARK______'
+COL_GHAT_DATE = 'GHAT_DATE'
+COL_CS_1ST_ISSUER = 'C_S_1ST_ISSUER'
+COL_CS_1ST_QTY = 'C_S_1ST_ISSUE_QTY'
+COL_CS_1ST_DATE = 'C_S_1ST_ISSUE_DATE'
+COL_CS_2ND_ISSUER = 'C_S_2ND_ISSUER'
+COL_CS_2ND_QTY = 'C_S_2ND_ISSUE_QTY'
+COL_CS_2ND_DATE = 'C_S_2ND_ISSUE_DATE'
+COL_SETTING_QC = 'SETTING_QC______'
+COL_SETTING_WT = 'SETTING_WT______'
+COL_SETTING_DATE = 'SETTING_DATE'
+COL_FINAL_QC = 'FINAL_QC______'
+COL_FINAL_WT = 'FINAL_WT______'
+COL_FINAL_QC_REMARK = 'FINAL_QC_REMARK'
+COL_FINAL_QC_DATE = 'FINAL_QC_DATE'
+COL_FINISH = 'FINISH'
+COL_FINISH_DATE = 'FINISH_DATE'
+COL_IGI_SGL = 'IGI_SGL'
+COL_IGI_DATE = 'IGI_DATE'
+COL_HUID = 'HUID'
+COL_HUID_DATE = 'HUID_DATE'
+COL_STATUS_DATE = 'STATUS_DATE'
 
 # ═══════════════════════════════════════════════════════════════
 # 1. INITIAL SETUP & CLIENT DEFINITION
@@ -40,18 +68,6 @@ client = bigquery.Client(credentials=creds, project=creds.project_id)
 # ═══════════════════════════════════════════════════════════════
 # 2. HELPER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════
-def get_drive_direct_link(url):
-    try:
-        if "id=" in str(url):
-            file_id = str(url).split("id=")[1].split("&")[0]
-        elif "d/" in str(url):
-            file_id = str(url).split("d/")[1].split("/")[0]
-        else:
-            return None
-        return f"https://drive.google.com/uc?export=view&id={file_id}"
-    except:
-        return None
-
 def refresh_native_tables():
     try:
         queries = [
@@ -76,8 +92,6 @@ def fetch_data():
     try:
         query = "SELECT * FROM `jewelry-sql-system.workshop_data.master_inventory_native`"
         df = client.query(query).to_dataframe()
-        # Normalize column names to uppercase with underscores
-        df.columns = [str(c).strip().upper().replace(' ', '_').replace('.', '_').replace('/', '_') for c in df.columns]
         # Drop rows with blank customer
         if COL_CUSTOMER in df.columns:
             df = df.dropna(subset=[COL_CUSTOMER])
@@ -105,6 +119,9 @@ def clean_date(dt):
     try:
         if pd.isna(dt) or str(dt).strip() == "" or str(dt) == "None": return "---"
         if isinstance(dt, str): dt = pd.to_datetime(dt, dayfirst=True)
+        # Handle Excel serial numbers
+        elif isinstance(dt, (int, float)) and dt > 40000 and dt < 60000:
+            dt = pd.to_datetime(int(dt), unit='D', origin='1899-12-30')
         return dt.strftime('%d-%b-%Y')
     except: return str(dt)
 
@@ -115,6 +132,13 @@ def safe_get(row, col, default="---"):
         return val
     except:
         return default
+
+def find_col(df, *candidates):
+    """Find the first matching column from candidates."""
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
 
 # ═══════════════════════════════════════════════════════════════
 # 3. RUN APP (Login Logic)
@@ -146,12 +170,14 @@ else:
             st.error(f"Not found: {', '.join(missing)}")
             st.write("**Available columns:**")
             st.code(", ".join(sorted(df.columns.tolist())))
-            st.info(f"💡 Update `COL_STATUS` (currently set to '{COL_STATUS}') if your status column has a different name.")
             st.stop()
 
         # Convert numeric columns
         df[COL_METAL_18KT] = pd.to_numeric(df[COL_METAL_18KT], errors='coerce').fillna(0)
         df[COL_DIA_CTS] = pd.to_numeric(df[COL_DIA_CTS], errors='coerce').fillna(0)
+        df[COL_GHAT_WT] = pd.to_numeric(df[COL_GHAT_WT], errors='coerce').fillna(0)
+        df[COL_SETTING_WT] = pd.to_numeric(df[COL_SETTING_WT], errors='coerce').fillna(0)
+        df[COL_FINAL_WT] = pd.to_numeric(df[COL_FINAL_WT], errors='coerce').fillna(0)
 
         # ─── SIDEBAR NAVIGATION ───
         st.sidebar.markdown("### 📊 MAIN REPORTS")
@@ -175,33 +201,26 @@ else:
         if menu == "🔧 Diagnostics":
             st.header("🔧 Schema Diagnostics")
             
-            st.subheader("📋 master_inventory_native Columns")
+            st.subheader("📋 All Columns")
             st.code(", ".join(df.columns.tolist()), language="text")
             
             st.subheader("📊 Data Types")
             st.dataframe(df.dtypes.to_frame(name="Data_Type").reset_index().rename(columns={"index": "Column"}),
                         use_container_width=True, hide_index=True)
             
-            st.subheader("🔍 First 3 Rows")
+            st.subheader("🔍 First 3 Data Rows")
             st.dataframe(df.head(3), use_container_width=True)
             
-            # Check status column values
-            if COL_STATUS in df.columns:
-                st.subheader(f"🔍 Unique Values in '{COL_STATUS}' (Status Column)")
-                status_counts = df[COL_STATUS].value_counts().reset_index()
-                status_counts.columns = [COL_STATUS, 'Count']
-                st.dataframe(status_counts, use_container_width=True, hide_index=True)
+            st.subheader(f"🔍 Unique Values in '{COL_STATUS}'")
+            status_counts = df[COL_STATUS].value_counts().reset_index()
+            status_counts.columns = [COL_STATUS, 'Count']
+            st.dataframe(status_counts, use_container_width=True, hide_index=True)
             
-            # Sales diagnostics
             st.divider()
-            st.subheader("📋 SALE_DATA_native Columns")
+            st.subheader("📋 SALE_DATA_native")
             sdf = fetch_sales_data()
             if sdf is not None:
-                sales_cols = sdf.columns.tolist()
-                st.write(f"**Total Columns:** {len(sales_cols)}")
-                for i in range(0, len(sales_cols), 10):
-                    st.code(", ".join(sales_cols[i:i+10]), language="text")
-                st.subheader("🔍 First 3 Rows")
+                st.code(", ".join(sdf.columns.tolist()), language="text")
                 st.dataframe(sdf.head(3), use_container_width=True)
             else:
                 st.error("Could not fetch sales data.")
@@ -350,15 +369,19 @@ else:
                             st.write(f"**Karigar:** {safe_get(r, COL_KARIGAR, 'N/A')}")
                             st.write(f"**Metal:** {std_round(safe_get(r, COL_METAL_18KT, 0))}g 18kt")
                             st.write(f"**Dia:** {float(safe_get(r, COL_DIA_CTS, 0)):.2f} Cts")
+                            st.write(f"**Form:** {safe_get(r, COL_FORM, 'N/A')}")
+                            st.write(f"**Metal Colour:** {safe_get(r, COL_METAL_COLOUR, 'N/A')}")
                         with sub2:
                             st.write(f"**Ordered:** {clean_date(safe_get(r, COL_ORDER_DATE))}")
                             st.write(f"**Metal Iss:** {clean_date(safe_get(r, COL_METAL_ISSUE_DATE))}")
                             st.write(f"**Deliv Dt:** {clean_date(safe_get(r, COL_DELIVERY_DATE))}")
                             st.write(f"**Status:** {safe_get(r, COL_STATUS, 'N/A')}")
+                            st.write(f"**Status Date:** {safe_get(r, COL_STATUS_DATE)}")
+                            st.write(f"**Karigar DOD:** {clean_date(safe_get(r, COL_KARIGAR_DOD))}")
                     
                     with col_img:
                         st.markdown("### 🖼️ Design")
-                        img_url = r.get(COL_IMAGE)
+                        img_url = r.get(COL_IMAGE_LINK)
                         if img_url and str(img_url).strip() not in ["", "---", "None", "nan"]:
                             if "id=" in str(img_url):
                                 file_id = str(img_url).split("id=")[1].split("&")[0]
@@ -376,51 +399,32 @@ else:
                     st.divider()
                     st.header("📋 QC Process Report")
                     
-                    def get_val_flex(prefix):
-                        col = next((c for c in match.columns if c.startswith(prefix)), None)
-                        if col:
-                            val = r[col]
-                            if pd.notna(val) and str(val).strip() not in ["", "None", "nan"]:
-                                return val
-                        return "---"
-
-                    def get_wt_flex(prefix):
-                        col = next((c for c in match.columns if c.startswith(prefix)), None)
-                        if col:
-                            val = r[col]
-                            try:
-                                v = float(val)
-                                return f"{v:.2f}" if v > 0 else "0.00"
-                            except:
-                                return "0.00"
-                        return "0.00"
-
-                    def get_date_flex(prefix):
-                        val = get_val_flex(prefix)
-                        if val == "---":
-                            return "---"
-                        try:
-                            dt = pd.to_datetime(val, dayfirst=True, errors='coerce')
-                            return dt.strftime('%d/%m/%Y %I:%M %p') if pd.notnull(dt) else str(val)
-                        except:
-                            return str(val)
-
                     q1, q2, q3 = st.columns(3)
                     with q1:
                         st.markdown("**🛠️ GHAT DETAILS**")
-                        st.write(f"**QC:** {get_val_flex('GHAT_QC')}")
-                        st.write(f"**Weight:** {get_wt_flex('GHAT_WT')}g")
-                        st.write(f"**Date:** {get_date_flex('GHAT_DATE')}")
+                        st.write(f"**QC:** {safe_get(r, COL_GHAT_QC)}")
+                        st.write(f"**Weight:** {float(safe_get(r, COL_GHAT_WT, 0)):.3f}g")
+                        st.write(f"**Remark:** {safe_get(r, COL_GHAT_REMARK)}")
+                        st.write(f"**Date:** {safe_get(r, COL_GHAT_DATE)}")
+                        st.write(f"**C.S. 1st Issue:** {safe_get(r, COL_CS_1ST_ISSUER)} ({safe_get(r, COL_CS_1ST_QTY, 0)} pcs)")
+                        st.write(f"**C.S. 1st Date:** {safe_get(r, COL_CS_1ST_DATE)}")
                     with q2:
                         st.markdown("**💎 SETTING DETAILS**")
-                        st.write(f"**QC:** {get_val_flex('SETTING_QC')}")
-                        st.write(f"**Weight:** {get_wt_flex('SETTING_WT')}g")
-                        st.write(f"**Date:** {get_date_flex('SETTING_DATE')}")
+                        st.write(f"**QC:** {safe_get(r, COL_SETTING_QC)}")
+                        st.write(f"**Weight:** {float(safe_get(r, COL_SETTING_WT, 0)):.3f}g")
+                        st.write(f"**Date:** {safe_get(r, COL_SETTING_DATE)}")
+                        st.write(f"**C.S. 2nd Issue:** {safe_get(r, COL_CS_2ND_ISSUER)} ({safe_get(r, COL_CS_2ND_QTY, 0)} pcs)")
+                        st.write(f"**C.S. 2nd Date:** {safe_get(r, COL_CS_2ND_DATE)}")
                     with q3:
                         st.markdown("**✨ FINAL FINISH**")
-                        st.write(f"**Final QC:** {get_val_flex('FINAL_QC')}")
-                        st.write(f"**Final Wt:** {get_wt_flex('FINAL_WT')}g")
-                        st.write(f"**QC Date:** {get_date_flex('FINAL_QC_DATE')}")
+                        st.write(f"**Final QC:** {safe_get(r, COL_FINAL_QC)}")
+                        st.write(f"**Final Wt:** {float(safe_get(r, COL_FINAL_WT, 0)):.3f}g")
+                        st.write(f"**Remark:** {safe_get(r, COL_FINAL_QC_REMARK)}")
+                        st.write(f"**QC Date:** {safe_get(r, COL_FINAL_QC_DATE)}")
+                        st.write(f"**Finish:** {'✅ Yes' if safe_get(r, COL_FINISH) == True else '❌ No'}")
+                        st.write(f"**Finish Date:** {safe_get(r, COL_FINISH_DATE)}")
+                        st.write(f"**IGI/SGL:** {safe_get(r, COL_IGI_SGL)} | {safe_get(r, COL_IGI_DATE)}")
+                        st.write(f"**HUID:** {'✅ Yes' if safe_get(r, COL_HUID) == True else '❌ No'} | {safe_get(r, COL_HUID_DATE)}")
 
                     st.divider()
                     try:
@@ -492,32 +496,24 @@ else:
                 st.error("Could not fetch sales data.")
                 st.stop()
             
-            # Auto-detect sales columns — using local variables (no global declaration needed)
+            # Auto-detect sales columns
             sales_cols = [str(c).strip().upper().replace(' ', '_').replace('.', '_') for c in sdf.columns]
             sdf.columns = sales_cols
             
-            _sales_customer = next((c for c in sales_cols if 'CUSTOMER' in c and 'DETAIL' not in c and 'SECTION' not in c), None)
-            if _sales_customer is None:
-                _sales_customer = next((c for c in sales_cols if 'CUST' in c), None)
-            
-            _sales_karigar = next((c for c in sales_cols if 'KARIGAR' in c), None)
-            
-            _sales_dia = next((c for c in sales_cols if 'DIA' in c and ('CTS' in c or 'CARAT' in c or 'CT' in c)), None)
+            _sales_customer = find_col(sdf, 'CUSTOMER', 'CUSTOMER_1', 'CUST_NAME')
+            _sales_karigar = find_col(sdf, 'KARIGAR', 'KARIGAR_1')
+            _sales_dia = find_col(sdf, 'DIA_CTS', 'DIA_CTS_1', 'DIAMOND_CTS', 'DIAMOND_CARAT')
             if _sales_dia is None:
                 for c in sales_cols:
                     if 'DIA' in c or 'DIAMOND' in c:
                         try:
-                            if pd.to_numeric(sdf[c], errors='coerce').notna().sum() > len(sdf) * 0.5:
+                            if pd.to_numeric(sdf[c], errors='coerce').notna().sum() > len(sdf) * 0.3:
                                 _sales_dia = c
                                 break
                         except:
                             pass
+            _sales_date = find_col(sdf, 'DATE', 'ORDER_DATE', 'SALE_DATE', 'SALES_DATE')
             
-            _sales_date = next((c for c in sales_cols if 'DATE' in c and 'ISSUE' not in c and 'DOD' not in c and 'FINISH' not in c and 'DELIVERY' not in c), None)
-            if _sales_date is None:
-                _sales_date = next((c for c in sales_cols if 'DATE' in c), None)
-            
-            # Show what we detected
             detected = {
                 'Customer': _sales_customer,
                 'Karigar': _sales_karigar,
